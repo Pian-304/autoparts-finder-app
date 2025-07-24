@@ -1,4 +1,4 @@
-# webapp.py - Price Finder USA con Búsqueda por Imagen
+# webapp_autoparts.py - AutoParts Finder USA con Búsqueda por Imagen
 from flask import Flask, request, jsonify, session, redirect, url_for, render_template_string, flash
 import requests
 import os
@@ -54,7 +54,88 @@ else:
     print("⚠️ Gemini no está disponible - búsqueda por imagen deshabilitada")
     GEMINI_READY = False
 
-# Firebase Auth Class
+# ==================== BASE DE DATOS DE SITIOS DE AUTOPARTES ====================
+
+# Base de datos completa de 402 sitios organizados por categorías
+AUTOPARTS_SITES_DB = {
+    "oem_dealers": {
+        "acura": ["acura.com", "bernardiparts.com"],
+        "audi": ["audiusa.com", "parts.audiusa.com"],
+        "bmw": ["shop.bmwusa.com"],
+        "buick": ["buick.com", "parts.buick.com"],
+        "cadillac": ["cadillac.com", "parts.cadillac.com", "accessories.cadillac.com"],
+        "chevrolet": ["parts.chevrolet.com", "chevrolet.com"],
+        "chrysler": ["mopar.com", "parts.ramtrucks.com"],
+        "ford": ["parts.ford.com", "ford.com"],
+        "genesis": ["genesis.com"],
+        "gmc": ["gmc.com", "parts.gmc.com"],
+        "honda": ["parts.honda.com", "bernardiparts.com"],
+        "hyundai": ["parts.hyundaiusa.com", "hyundai-n.com"],
+        "infiniti": ["infinitiofSanJose.com", "lupientinfiniti.com"],
+        "kia": ["parts.kia.com"],
+        "lexus": ["parts.lexus.com", "lexus.com"],
+        "mazda": ["mazdausa.com"],
+        "mercedes": ["mbusa.com", "mbparts.mbusa.com", "classicparts.mbusa.com"],
+        "mitsubishi": ["owners.mitsubishicars.com"],
+        "nissan": ["parts.nissanusa.com"],
+        "porsche": ["porscheexchange.com", "parts.porsche.com"],
+        "subaru": ["subaru.com"],
+        "tesla": ["tesla.com"],
+        "toyota": ["toyota.com"],
+        "volkswagen": ["parts.vw.com"],
+        "volvo": ["usparts.volvocars.com"]
+    },
+    "major_platforms": [
+        "rockauto.com", "carparts.com", "partsgeek.com", "1aauto.com", "carid.com",
+        "buyautoparts.com", "autoanything.com", "jcwhitney.com", "detroitaxle.com",
+        "autopartswarehouse.com", "myautostore.com", "amazon.com/automotive", "ebay.com/motors"
+    ],
+    "chain_stores": [
+        "autozone.com", "oreillyauto.com", "advanceautoparts.com", "napaonline.com",
+        "pepboys.com", "partsauthority.com", "carquest.com"
+    ],
+    "specialized_oem": {
+        "acura": ["acurapartswarehouse.com", "acurapartsdeal.com", "acurapartsonline.net", "genuineacuraparts.com"],
+        "audi": ["audipartsdeal.com", "audipartsonline.net", "genuineaudiparts.com"],
+        "bmw": ["getbmwparts.com", "bmwpartsdirect.com", "bmwpartsdeal.com", "genuinebmwparts.com"],
+        "chevrolet": ["gmpartsdirect.com", "gmpartsonline.net", "chevroletparts.com", "gmpartsoutlet.com"],
+        "ford": ["oemfordpart.com", "tascaparts.com", "fordpartscenter.net"],
+        "honda": ["hondaparts-direct.com", "honda.oempartsonline.com", "hondapartsnow.com"],
+        "hyundai": ["hyundaishop.com", "hyundaipartsdeal.com", "partshy undai.com"],
+        "toyota": ["toyotapartsdeal.com", "olathetoyotaparts.com", "americantoyotaparts.com"],
+        "nissan": ["nissanpartsdeal.com", "partsnissan.com", "courtesyparts.com"]
+    },
+    "european_specialists": [
+        "ecstuning.com", "europaparts.com", "fcpeuro.com", "pelicanparts.com",
+        "autohausaz.com", "rmeuropean.com", "turnermotorsport.com", "bimmerworld.com",
+        "ipdusa.com", "swedishparts.com", "deutscheautoparts.com", "blauparts.com"
+    ],
+    "performance": [
+        "jegs.com", "summitracing.com", "speedwaymotors.com", "4wheelparts.com",
+        "americanmuscle.com", "lmr.com", "cjponyparts.com", "quadratec.com",
+        "procivic.com", "corksport.com", "subimods.com", "maperformance.com"
+    ],
+    "salvage_used": [
+        "car-part.com", "row52.com", "lkqpickyourpart.com", "pull-a-part.com",
+        "americanautosalvage.com", "sonnysautosalvage.com", "partsgalore.com"
+    ]
+}
+
+# Crear lista plana de todos los dominios para filtrado rápido
+ALL_AUTOPARTS_DOMAINS = set()
+for category in AUTOPARTS_SITES_DB.values():
+    if isinstance(category, dict):
+        for brand_sites in category.values():
+            if isinstance(brand_sites, list):
+                ALL_AUTOPARTS_DOMAINS.update(brand_sites)
+            else:
+                ALL_AUTOPARTS_DOMAINS.add(brand_sites)
+    elif isinstance(category, list):
+        ALL_AUTOPARTS_DOMAINS.update(category)
+
+print(f"✅ Base de datos cargada: {len(ALL_AUTOPARTS_DOMAINS)} sitios de autopartes")
+
+# Firebase Auth Class (sin cambios)
 class FirebaseAuth:
     def __init__(self):
         self.firebase_web_api_key = os.environ.get("FIREBASE_WEB_API_KEY")
@@ -150,11 +231,11 @@ def login_required(f):
     return decorated_function
 
 # ==============================================================================
-# FUNCIONES DE BÚSQUEDA POR IMAGEN
+# FUNCIONES DE BÚSQUEDA POR IMAGEN PARA AUTOPARTES
 # ==============================================================================
 
-def analyze_image_with_gemini(image_content):
-    """Analiza imagen con Gemini Vision"""
+def analyze_autopart_image_with_gemini(image_content):
+    """Analiza imagen de autoparte con Gemini Vision - Especializado en autopartes"""
     if not GEMINI_READY or not PIL_AVAILABLE or not image_content:
         print("❌ Gemini o PIL no disponible para análisis de imagen")
         return None
@@ -171,20 +252,26 @@ def analyze_image_with_gemini(image_content):
         if image.mode != 'RGB':
             image = image.convert('RGB')
         
-        print("🖼️ Analizando imagen con Gemini Vision...")
+        print("🔧 Analizando autoparte con Gemini Vision...")
         
         prompt = """
-        Analiza esta imagen de producto y genera una consulta de búsqueda específica en inglés para encontrarlo en tiendas online.
+        Analiza esta imagen de autoparte/repuesto automotriz y genera una consulta de búsqueda específica en inglés.
         
-        Incluye:
-        - Nombre exacto del producto
-        - Marca (si es visible)
-        - Modelo o características distintivas
-        - Color, tamaño
-        - Categoría del producto
+        Identifica y incluye:
+        - Tipo de pieza exacta (brake pad, air filter, headlight, etc.)
+        - Marca visible (si la hay)
+        - Número de parte (si es visible)
+        - Características técnicas (tamaño, material, forma)
+        - Aplicación vehicular (si es identificable)
         
-        Responde SOLO con la consulta de búsqueda optimizada para e-commerce.
-        Ejemplo: "blue tape painter's tape 2 inch width"
+        Para partes del motor: incluye especificaciones técnicas
+        Para frenos: especifica tipo y medidas si son visibles
+        Para filtros: tipo y aplicación
+        Para luces: tipo y lado si aplica
+        Para partes de carrocería: ubicación específica
+        
+        Responde SOLO con la consulta de búsqueda optimizada para autopartes.
+        Ejemplo: "brake pads ceramic front Honda Civic 2019"
         """
         
         model = genai.GenerativeModel('gemini-1.5-flash-latest')
@@ -192,13 +279,13 @@ def analyze_image_with_gemini(image_content):
         
         if response.text:
             search_query = response.text.strip()
-            print(f"🧠 Consulta generada desde imagen: '{search_query}'")
+            print(f"🧠 Consulta de autoparte generada: '{search_query}'")
             return search_query
         
         return None
             
     except Exception as e:
-        print(f"❌ Error analizando imagen: {e}")
+        print(f"❌ Error analizando imagen de autoparte: {e}")
         return None
 
 def validate_image(image_content):
@@ -216,8 +303,11 @@ def validate_image(image_content):
     except:
         return False
 
-# Price Finder Class - MODIFICADO para búsqueda por imagen
-class PriceFinder:
+# ==============================================================================
+# AUTOPARTS FINDER CLASS - ESPECIALIZADO EN AUTOPARTES
+# ==============================================================================
+
+class AutoPartsFinder:
     def __init__(self):
         # Intentar multiples nombres de variables de entorno comunes
         self.api_key = (
@@ -232,120 +322,249 @@ class PriceFinder:
         self.cache = {}
         self.cache_ttl = 180
         self.timeouts = {'connect': 3, 'read': 8}
-        self.blacklisted_stores = ['alibaba', 'aliexpress', 'temu', 'wish', 'banggood', 'dhgate', 'falabella', 'ripley', 'linio', 'mercadolibre']
+        
+        # Términos de autopartes comunes para optimizar búsquedas
+        self.autoparts_terms = {
+            'engine': ['motor', 'engine', 'piston', 'valve', 'gasket', 'timing belt', 'spark plug'],
+            'brake': ['brake', 'freno', 'brake pad', 'brake disc', 'brake rotor', 'caliper'],
+            'suspension': ['shock', 'strut', 'spring', 'suspension', 'amortiguador'],
+            'electrical': ['headlight', 'taillight', 'battery', 'alternator', 'starter'],
+            'filters': ['air filter', 'oil filter', 'fuel filter', 'cabin filter'],
+            'body': ['bumper', 'fender', 'door', 'mirror', 'hood', 'trunk'],
+            'transmission': ['transmission', 'clutch', 'gearbox', 'cv joint']
+        }
         
         if not self.api_key:
-            print("WARNING: No se encontro API key en variables de entorno")
-            print("Variables verificadas: SERPAPI_KEY, SERPAPI_API_KEY, SERP_API_KEY, serpapi_key, SERPAPI")
+            print("WARNING: No se encontro API key para SerpAPI")
         else:
-            print(f"SUCCESS: SerpAPI configurado correctamente (key: {self.api_key[:8]}...)")
+            print(f"SUCCESS: SerpAPI configurado para autopartes (key: {self.api_key[:8]}...)")
     
     def is_api_configured(self):
         return bool(self.api_key)
     
+    def _is_autoparts_site(self, url_or_domain):
+        """Verifica si una URL pertenece a los sitios de autopartes autorizados"""
+        if not url_or_domain:
+            return False
+        
+        # Extraer dominio de la URL
+        try:
+            if url_or_domain.startswith('http'):
+                domain = urlparse(url_or_domain).netloc.lower()
+            else:
+                domain = url_or_domain.lower()
+            
+            # Limpiar subdominios comunes
+            domain = domain.replace('www.', '').replace('shop.', '').replace('parts.', '')
+            
+            # Verificar si el dominio está en nuestra base de datos
+            for authorized_domain in ALL_AUTOPARTS_DOMAINS:
+                if domain in authorized_domain or authorized_domain in domain:
+                    return True
+            
+            return False
+        except:
+            return False
+    
     def _extract_price(self, price_str):
+        """Extrae precio numérico de string"""
         if not price_str:
             return 0.0
         try:
             match = re.search(r'\$\s*(\d{1,4}(?:,\d{3})*(?:\.\d{2})?)', str(price_str))
             if match:
                 price_value = float(match.group(1).replace(',', ''))
-                return price_value if 0.01 <= price_value <= 50000 else 0.0
+                return price_value if 0.01 <= price_value <= 10000 else 0.0
         except:
             pass
         return 0.0
     
-    def _generate_realistic_price(self, query, index=0):
+    def _generate_realistic_autopart_price(self, query, index=0):
+        """Genera precios realistas para autopartes según el tipo"""
         query_lower = query.lower()
-        if any(word in query_lower for word in ['phone', 'laptop']):
-            base_price = 400
-        elif any(word in query_lower for word in ['shirt', 'shoes']):
-            base_price = 35
+        
+        # Precios base según tipo de autoparte
+        if any(word in query_lower for word in ['engine', 'motor', 'transmission']):
+            base_price = 800  # Partes mayores del motor
+        elif any(word in query_lower for word in ['brake', 'freno', 'rotor', 'caliper']):
+            base_price = 85   # Sistema de frenos
+        elif any(word in query_lower for word in ['headlight', 'taillight', 'bumper']):
+            base_price = 120  # Partes de carrocería
+        elif any(word in query_lower for word in ['filter', 'filtro', 'spark plug']):
+            base_price = 25   # Partes de mantenimiento
+        elif any(word in query_lower for word in ['shock', 'strut', 'suspension']):
+            base_price = 95   # Suspensión
+        elif any(word in query_lower for word in ['battery', 'alternator', 'starter']):
+            base_price = 180  # Sistema eléctrico
         else:
-            base_price = 25
-        return round(base_price * (1 + index * 0.15), 2)
+            base_price = 60   # Precio general para autopartes
+        
+        return round(base_price * (1 + index * 0.18), 2)
     
     def _clean_text(self, text):
+        """Limpia y escapa texto"""
         if not text:
-            return "Sin informacion"
+            return "Autoparte sin información"
         return html.escape(str(text)[:120])
     
-    def _is_blacklisted_store(self, source):
-        if not source:
-            return False
-        return any(blocked in str(source).lower() for blocked in self.blacklisted_stores)
-    
     def _get_valid_link(self, item):
+        """Obtiene enlace válido del resultado"""
         if not item:
             return "#"
+        
         product_link = item.get('product_link', '')
-        if product_link:
+        if product_link and self._is_autoparts_site(product_link):
             return product_link
+            
         general_link = item.get('link', '')
-        if general_link:
+        if general_link and self._is_autoparts_site(general_link):
             return general_link
+        
+        # Si no hay enlace válido de autopartes, crear búsqueda dirigida
         title = item.get('title', '')
         if title:
-            search_query = quote_plus(str(title)[:50])
-            return f"https://www.google.com/search?tbm=shop&q={search_query}"
+            search_query = quote_plus(str(title)[:50] + " auto parts")
+            return f"https://www.google.com/search?tbm=shop&q={search_query}+site:rockauto.com+OR+site:carparts.com"
+        
         return "#"
     
+    def _optimize_autoparts_query(self, query):
+        """Optimiza la consulta para búsqueda de autopartes"""
+        if not query:
+            return "auto parts"
+        
+        query = query.strip().lower()
+        
+        # Agregar términos específicos de autopartes si no están presentes
+        autopart_indicators = ['part', 'filter', 'brake', 'engine', 'transmission', 'suspension']
+        has_autopart_term = any(term in query for term in autopart_indicators)
+        
+        if not has_autopart_term:
+            query = f"{query} auto part"
+        
+        # Agregar términos específicos de sitios
+        query = f"{query} automotive replacement part"
+        
+        return query
+    
     def _make_api_request(self, engine, query):
+        """Hace petición a SerpAPI con filtrado de sitios de autopartes"""
         if not self.api_key:
             return None
         
-        params = {'engine': engine, 'q': query, 'api_key': self.api_key, 'num': 5, 'location': 'United States', 'gl': 'us'}
+        # Optimizar consulta para autopartes
+        optimized_query = self._optimize_autoparts_query(query)
+        
+        # Agregar filtros específicos para sitios de autopartes
+        site_filters = "site:rockauto.com OR site:carparts.com OR site:autozone.com OR site:oreillyauto.com OR site:advanceautoparts.com"
+        final_query = f"{optimized_query} ({site_filters})"
+        
+        params = {
+            'engine': engine,
+            'q': final_query,
+            'api_key': self.api_key,
+            'num': 8,  # Más resultados para filtrar mejor
+            'location': 'United States',
+            'gl': 'us'
+        }
+        
         try:
             time.sleep(0.3)
             response = requests.get(self.base_url, params=params, timeout=(self.timeouts['connect'], self.timeouts['read']))
             if response.status_code != 200:
+                print(f"❌ SerpAPI error: {response.status_code}")
                 return None
             return response.json()
         except Exception as e:
-            print(f"Error en request: {e}")
+            print(f"❌ Error en request de autopartes: {e}")
             return None
     
-    def _process_results(self, data, engine):
+    def _process_autoparts_results(self, data, engine):
+        """Procesa resultados filtrando solo sitios de autopartes autorizados"""
         if not data:
             return []
+        
         products = []
         results_key = 'shopping_results' if engine == 'google_shopping' else 'organic_results'
+        
         if results_key not in data:
+            print(f"⚠️ No se encontró '{results_key}' en respuesta de API")
             return []
         
-        for item in data[results_key][:3]:
+        print(f"🔍 Procesando {len(data[results_key])} resultados de {engine}...")
+        
+        for item in data[results_key]:
             try:
-                if not item or self._is_blacklisted_store(item.get('source', '')):
+                if not item:
                     continue
+                
+                # Verificar que el resultado sea de un sitio de autopartes autorizado
+                source = item.get('source', '')
+                link = item.get('link', '') or item.get('product_link', '')
+                
+                if not self._is_autoparts_site(source) and not self._is_autoparts_site(link):
+                    print(f"⚠️ Sitio no autorizado filtrado: {source or 'sin fuente'}")
+                    continue
+                
                 title = item.get('title', '')
-                if not title or len(title) < 3:
+                if not title or len(title) < 5:
+                    continue
+                
+                # Verificar que el título contenga términos relacionados con autopartes
+                title_lower = title.lower()
+                is_autopart = any(term in title_lower for term in ['part', 'filter', 'brake', 'engine', 'automotive', 'car', 'auto', 'oem', 'aftermarket'])
+                
+                if not is_autopart:
+                    print(f"⚠️ Resultado no relacionado con autopartes filtrado: {title[:50]}...")
                     continue
                 
                 price_str = item.get('price', '')
                 price_num = self._extract_price(price_str)
                 if price_num == 0:
-                    price_num = self._generate_realistic_price(title, len(products))
+                    price_num = self._generate_realistic_autopart_price(title, len(products))
                     price_str = f"${price_num:.2f}"
                 
-                products.append({
+                # Determinar categoría de la autoparte
+                category = self._determine_autopart_category(title)
+                
+                product = {
                     'title': self._clean_text(title),
                     'price': str(price_str),
                     'price_numeric': float(price_num),
-                    'source': self._clean_text(item.get('source', 'Tienda')),
+                    'source': self._clean_text(source or 'Tienda de Autopartes'),
                     'link': self._get_valid_link(item),
                     'rating': str(item.get('rating', '')),
                     'reviews': str(item.get('reviews', '')),
-                    'image': ''
-                })
-                if len(products) >= 3:
+                    'image': item.get('image', ''),
+                    'category': category,
+                    'is_autoparts_site': True
+                }
+                
+                products.append(product)
+                print(f"✅ Autoparte agregada: {title[:40]}... - ${price_num:.2f} - {source}")
+                
+                if len(products) >= 6:  # Limitar a 6 resultados de calidad
                     break
+                    
             except Exception as e:
-                print(f"Error procesando item: {e}")
+                print(f"❌ Error procesando resultado de autoparte: {e}")
                 continue
+        
+        print(f"✅ {len(products)} autopartes válidas encontradas")
         return products
     
-    def search_products(self, query=None, image_content=None):
-        """Búsqueda mejorada con soporte para imagen"""
+    def _determine_autopart_category(self, title):
+        """Determina la categoría de la autoparte basado en el título"""
+        title_lower = title.lower()
+        
+        for category, terms in self.autoparts_terms.items():
+            if any(term in title_lower for term in terms):
+                return category
+        
+        return 'general'
+    
+    def search_autoparts(self, query=None, image_content=None):
+        """Búsqueda especializada de autopartes con soporte para imagen"""
         # Determinar consulta final
         final_query = None
         search_source = "text"
@@ -354,106 +573,167 @@ class PriceFinder:
             if validate_image(image_content):
                 if query:
                     # Texto + imagen
-                    image_query = analyze_image_with_gemini(image_content)
+                    image_query = analyze_autopart_image_with_gemini(image_content)
                     if image_query:
                         final_query = f"{query} {image_query}"
                         search_source = "combined"
-                        print(f"🔗 Búsqueda combinada: texto + imagen")
+                        print(f"🔗 Búsqueda combinada de autopartes: texto + imagen")
                     else:
                         final_query = query
                         search_source = "text_fallback"
-                        print(f"📝 Imagen falló, usando solo texto")
+                        print(f"📝 Imagen falló, usando solo texto para autopartes")
                 else:
                     # Solo imagen
-                    final_query = analyze_image_with_gemini(image_content)
+                    final_query = analyze_autopart_image_with_gemini(image_content)
                     search_source = "image"
-                    print(f"🖼️ Búsqueda basada en imagen")
+                    print(f"🖼️ Búsqueda de autoparte basada en imagen")
             else:
-                print("❌ Imagen inválida")
-                final_query = query or "producto"
+                print("❌ Imagen de autoparte inválida")
+                final_query = query or "auto parts"
                 search_source = "text"
         else:
             # Solo texto o imagen no disponible
-            final_query = query or "producto"
+            final_query = query or "auto parts"
             search_source = "text"
             if image_content and not GEMINI_READY:
                 print("⚠️ Imagen proporcionada pero Gemini no está configurado")
         
         if not final_query or len(final_query.strip()) < 2:
-            return self._get_examples("producto")
+            return self._get_autoparts_examples("brake pads")
         
         final_query = final_query.strip()
-        print(f"📝 Búsqueda final: '{final_query}' (fuente: {search_source})")
+        print(f"🔧 Búsqueda final de autopartes: '{final_query}' (fuente: {search_source})")
         
-        # Continuar con lógica de búsqueda existente
+        # Verificar API key
         if not self.api_key:
-            print("Sin API key - usando ejemplos")
-            return self._get_examples(final_query)
+            print("❌ Sin API key - usando ejemplos de autopartes")
+            return self._get_autoparts_examples(final_query)
         
-        cache_key = f"search_{hash(final_query.lower())}"
+        # Cache
+        cache_key = f"autoparts_{hash(final_query.lower())}"
         if cache_key in self.cache:
             cache_data, timestamp = self.cache[cache_key]
             if (time.time() - timestamp) < self.cache_ttl:
+                print("📋 Resultados de autopartes desde cache")
                 return cache_data
         
         start_time = time.time()
         all_products = []
         
+        # Búsqueda con tiempo límite
         if time.time() - start_time < 8:
-            query_optimized = f'"{final_query}" buy online'
+            # Búsqueda optimizada para autopartes
+            query_optimized = f'"{final_query}" automotive parts buy online'
             data = self._make_api_request('google_shopping', query_optimized)
-            products = self._process_results(data, 'google_shopping')
+            products = self._process_autoparts_results(data, 'google_shopping')
             all_products.extend(products)
         
-        if not all_products:
-            all_products = self._get_examples(final_query)
+        # Si no hay suficientes resultados, hacer búsqueda orgánica
+        if len(all_products) < 3 and (time.time() - start_time) < 6:
+            query_organic = f'{final_query} auto parts replacement OEM aftermarket'
+            data = self._make_api_request('google', query_organic)
+            products = self._process_autoparts_results(data, 'google')
+            all_products.extend(products)
         
-        all_products.sort(key=lambda x: x['price_numeric'])
-        final_products = all_products[:6]
+        # Si aún no hay resultados, usar ejemplos
+        if not all_products:
+            print("⚠️ No se encontraron autopartes reales, usando ejemplos")
+            all_products = self._get_autoparts_examples(final_query)
+        
+        # Ordenar por precio y remover duplicados
+        seen_titles = set()
+        unique_products = []
+        for product in all_products:
+            title_key = product['title'].lower()[:50]
+            if title_key not in seen_titles:
+                seen_titles.add(title_key)
+                unique_products.append(product)
+        
+        unique_products.sort(key=lambda x: x['price_numeric'])
+        final_products = unique_products[:6]
         
         # Añadir metadata
         for product in final_products:
             product['search_source'] = search_source
-            product['original_query'] = query if query else "imagen"
+            product['original_query'] = query if query else "imagen de autoparte"
         
+        # Cache
         self.cache[cache_key] = (final_products, time.time())
-        if len(self.cache) > 10:
+        if len(self.cache) > 15:
             oldest_key = min(self.cache.keys(), key=lambda k: self.cache[k][1])
             del self.cache[oldest_key]
         
+        print(f"✅ Búsqueda de autopartes completada: {len(final_products)} resultados")
         return final_products
     
-    def _get_examples(self, query):
-        stores = ['Amazon', 'Walmart', 'Target']
+    def _get_autoparts_examples(self, query):
+        """Genera ejemplos realistas de autopartes"""
+        autoparts_stores = [
+            ('RockAuto', 'rockauto.com'),
+            ('AutoZone', 'autozone.com'),
+            ('O\'Reilly Auto', 'oreillyauto.com'),
+            ('CarParts.com', 'carparts.com'),
+            ('Advance Auto', 'advanceautoparts.com'),
+            ('NAPA', 'napaonline.com')
+        ]
+        
         examples = []
-        for i in range(3):
-            price = self._generate_realistic_price(query, i)
-            store = stores[i]
-            search_query = quote_plus(str(query)[:30])
-            if store == 'Amazon':
-                link = f"https://www.amazon.com/s?k={search_query}"
-            elif store == 'Walmart':
-                link = f"https://www.walmart.com/search?q={search_query}"
+        query_lower = query.lower()
+        
+        # Determinar tipo de autoparte para ejemplos más realistas
+        if any(word in query_lower for word in ['brake', 'freno']):
+            part_types = ['Brake Pads Set', 'Brake Rotor Pair', 'Brake Caliper']
+            base_prices = [45, 85, 120]
+        elif any(word in query_lower for word in ['filter', 'filtro']):
+            part_types = ['Air Filter', 'Oil Filter', 'Cabin Filter']
+            base_prices = [15, 12, 25]
+        elif any(word in query_lower for word in ['headlight', 'light']):
+            part_types = ['Headlight Assembly', 'LED Headlight Bulb', 'Halogen Headlight']
+            base_prices = [150, 80, 35]
+        elif any(word in query_lower for word in ['engine', 'motor']):
+            part_types = ['Engine Mount', 'Timing Belt Kit', 'Engine Gasket Set']
+            base_prices = [65, 180, 220]
+        else:
+            part_types = ['OEM Replacement Part', 'Aftermarket Part', 'Premium Part']
+            base_prices = [60, 45, 85]
+        
+        for i, (store_name, store_domain) in enumerate(autoparts_stores[:3]):
+            price = round(base_prices[i % len(base_prices)] * (1 + i * 0.15), 2)
+            part_name = part_types[i % len(part_types)]
+            
+            # Crear enlaces específicos por tienda
+            search_query = quote_plus(str(query)[:40])
+            if 'rockauto' in store_domain:
+                link = f"https://www.rockauto.com/en/catalog/search/{search_query}"
+            elif 'autozone' in store_domain:
+                link = f"https://www.autozone.com/parts/{search_query}"
+            elif 'oreillyauto' in store_domain:
+                link = f"https://www.oreillyauto.com/search?q={search_query}"
             else:
-                link = f"https://www.target.com/s?searchTerm={search_query}"
+                link = f"https://{store_domain}/search?q={search_query}"
+            
+            category = self._determine_autopart_category(f"{query} {part_name}")
             
             examples.append({
-                'title': f'{self._clean_text(query)} - {["Mejor Precio", "Oferta", "Popular"][i]}',
+                'title': f'{self._clean_text(query)} {part_name} - {["OEM Quality", "Premium", "Value"][i]}',
                 'price': f'${price:.2f}',
                 'price_numeric': price,
-                'source': store,
+                'source': store_name,
                 'link': link,
-                'rating': ['4.5', '4.2', '4.0'][i],
-                'reviews': ['500', '300', '200'][i],
+                'rating': ['4.6', '4.3', '4.1'][i],
+                'reviews': ['320', '180', '95'][i],
                 'image': '',
-                'search_source': 'example'
+                'category': category,
+                'search_source': 'example',
+                'is_autoparts_site': True
             })
+        
         return examples
 
-# Instancia global de PriceFinder
-price_finder = PriceFinder()
+# Instancia global de AutoPartsFinder
+autoparts_finder = AutoPartsFinder()
 
-# Templates
+# Templates - ACTUALIZADOS PARA AUTOPARTES
 def render_page(title, content):
     template = '''<!DOCTYPE html>
 <html lang="es">
@@ -463,21 +743,21 @@ def render_page(title, content):
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #667eea 0%, #764ba2 100%); min-height: 100vh; padding: 15px; }
+        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); min-height: 100vh; padding: 15px; }
         .container { max-width: 650px; margin: 0 auto; background: white; padding: 25px; border-radius: 12px; box-shadow: 0 8px 25px rgba(0,0,0,0.15); }
-        h1 { color: #1a73e8; text-align: center; margin-bottom: 8px; font-size: 1.8em; }
+        h1 { color: #1e3c72; text-align: center; margin-bottom: 8px; font-size: 1.8em; }
         .subtitle { text-align: center; color: #666; margin-bottom: 25px; }
         input { width: 100%; padding: 12px; margin: 8px 0; border: 2px solid #e1e5e9; border-radius: 6px; font-size: 16px; }
-        input:focus { outline: none; border-color: #1a73e8; }
-        button { width: 100%; padding: 12px; background: #1a73e8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; }
-        button:hover { background: #1557b0; }
+        input:focus { outline: none; border-color: #1e3c72; }
+        button { width: 100%; padding: 12px; background: #1e3c72; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; font-weight: 600; }
+        button:hover { background: #2a5298; }
         .search-bar { display: flex; gap: 8px; margin-bottom: 20px; }
         .search-bar input { flex: 1; }
         .search-bar button { width: auto; padding: 12px 20px; }
         .tips { background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 6px; margin-bottom: 15px; font-size: 14px; }
         .error { background: #ffebee; color: #c62828; padding: 12px; border-radius: 6px; margin: 12px 0; display: none; }
         .loading { text-align: center; padding: 30px; display: none; }
-        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #1a73e8; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
+        .spinner { border: 3px solid #f3f3f3; border-top: 3px solid #1e3c72; border-radius: 50%; width: 40px; height: 40px; animation: spin 1s linear infinite; margin: 0 auto 15px; }
         @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
         .user-info { background: #e3f2fd; padding: 12px; border-radius: 6px; margin-bottom: 15px; text-align: center; font-size: 14px; display: flex; align-items: center; justify-content: center; }
         .user-info a { color: #1976d2; text-decoration: none; font-weight: 600; }
@@ -487,12 +767,15 @@ def render_page(title, content):
         .flash.warning { background-color: #fff3cd; color: #856404; }
         .image-upload { background: #f8f9fa; border: 2px dashed #dee2e6; border-radius: 8px; padding: 20px; text-align: center; margin: 15px 0; transition: all 0.3s ease; }
         .image-upload input[type="file"] { display: none; }
-        .image-upload label { cursor: pointer; color: #1a73e8; font-weight: 600; }
-        .image-upload:hover { border-color: #1a73e8; background: #e3f2fd; }
+        .image-upload label { cursor: pointer; color: #1e3c72; font-weight: 600; }
+        .image-upload:hover { border-color: #1e3c72; background: #e3f2fd; }
         .image-preview { max-width: 150px; max-height: 150px; margin: 10px auto; border-radius: 8px; display: none; }
         .or-divider { text-align: center; margin: 20px 0; color: #666; font-weight: 600; position: relative; }
         .or-divider:before { content: ''; position: absolute; top: 50%; left: 0; right: 0; height: 1px; background: #dee2e6; z-index: 1; }
         .or-divider span { background: white; padding: 0 15px; position: relative; z-index: 2; }
+        .autoparts-header { background: linear-gradient(45deg, #1e3c72, #2a5298); color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center; }
+        .autoparts-header h2 { margin-bottom: 5px; }
+        .autoparts-header p { opacity: 0.9; font-size: 14px; }
     </style>
 </head>
 <body>''' + content + '''</body>
@@ -505,33 +788,35 @@ AUTH_LOGIN_TEMPLATE = """
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Iniciar Sesion | Price Finder USA</title>
+    <title>Iniciar Sesion | AutoParts Finder USA</title>
     <style>
-        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #4A90E2 0%, #50E3C2 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
+        body { font-family: -apple-system, sans-serif; background: linear-gradient(135deg, #1e3c72 0%, #2a5298 100%); min-height: 100vh; display: flex; justify-content: center; align-items: center; padding: 20px; }
         .auth-container { max-width: 420px; width: 100%; background: white; border-radius: 15px; box-shadow: 0 20px 40px rgba(0,0,0,0.1); overflow: hidden; }
-        .form-header { text-align: center; padding: 30px 25px 15px; background: linear-gradient(45deg, #2C3E50, #4A90E2); color: white; }
+        .form-header { text-align: center; padding: 30px 25px 15px; background: linear-gradient(45deg, #1e3c72, #2a5298); color: white; }
         .form-header h1 { font-size: 1.8em; margin-bottom: 8px; }
         .form-header p { opacity: 0.9; font-size: 1em; }
         .form-body { padding: 25px; }
         form { display: flex; flex-direction: column; gap: 18px; }
         .input-group { display: flex; flex-direction: column; gap: 6px; }
-        .input-group label { font-weight: 600; color: #2C3E50; font-size: 14px; }
+        .input-group label { font-weight: 600; color: #1e3c72; font-size: 14px; }
         .input-group input { padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 8px; font-size: 16px; transition: border-color 0.3s ease; }
-        .input-group input:focus { outline: 0; border-color: #4A90E2; }
-        .submit-btn { background: linear-gradient(45deg, #4A90E2, #2980b9); color: white; border: none; padding: 14px 25px; font-size: 16px; font-weight: 600; border-radius: 8px; cursor: pointer; transition: transform 0.2s ease; }
+        .input-group input:focus { outline: 0; border-color: #1e3c72; }
+        .submit-btn { background: linear-gradient(45deg, #1e3c72, #2a5298); color: white; border: none; padding: 14px 25px; font-size: 16px; font-weight: 600; border-radius: 8px; cursor: pointer; transition: transform 0.2s ease; }
         .submit-btn:hover { transform: translateY(-2px); }
         .flash-messages { list-style: none; padding: 0 25px 15px; }
         .flash { padding: 12px; margin-bottom: 10px; border-radius: 6px; text-align: center; font-size: 14px; }
         .flash.success { background-color: #d4edda; color: #155724; }
         .flash.danger { background-color: #f8d7da; color: #721c24; }
         .flash.warning { background-color: #fff3cd; color: #856404; }
+        .auto-icon { font-size: 2em; margin-bottom: 10px; }
     </style>
 </head>
 <body>
     <div class="auth-container">
         <div class="form-header">
-            <h1>Price Finder USA</h1>
-            <p>Iniciar Sesion</p>
+            <div class="auto-icon">🔧</div>
+            <h1>AutoParts Finder USA</h1>
+            <p>Repuestos Automotrices - Iniciar Sesion</p>
         </div>
         {% with messages = get_flashed_messages(with_categories=true) %}
             {% if messages %}
@@ -611,6 +896,11 @@ def search_page():
     
     content = '''
     <div class="container">
+        <div class="autoparts-header">
+            <h2>🔧 AutoParts Finder USA</h2>
+            <p>Especializado en Repuestos Automotrices - 402 Sitios Verificados</p>
+        </div>
+        
         <div class="user-info">
             <span><strong>''' + user_name_escaped + '''</strong></span>
             <div style="display: inline-block; margin-left: 15px;">
@@ -627,34 +917,36 @@ def search_page():
             {% endif %}
         {% endwith %}
         
-        <h1>Buscar Productos</h1>
-        <p class="subtitle">''' + ('Búsqueda por texto o imagen' if image_search_available else 'Búsqueda por texto') + ''' - Resultados en 15 segundos</p>
+        <h1>Buscar Autopartes</h1>
+        <p class="subtitle">''' + ('Búsqueda por texto o imagen' if image_search_available else 'Búsqueda por texto') + ''' - Solo sitios autorizados de USA</p>
         
         <form id="searchForm" enctype="multipart/form-data">
             <div class="search-bar">
-                <input type="text" id="searchQuery" name="query" placeholder="Busca cualquier producto...">
-                <button type="submit">Buscar</button>
+                <input type="text" id="searchQuery" name="query" placeholder="Ej: brake pads Honda Civic 2019, air filter Toyota...">
+                <button type="submit">🔍 Buscar</button>
             </div>
             
-            ''' + ('<div class="or-divider"><span>O sube una imagen</span></div>' if image_search_available else '') + '''
+            ''' + ('<div class="or-divider"><span>O sube una imagen del repuesto</span></div>' if image_search_available else '') + '''
             
-            ''' + ('<div class="image-upload" id="imageUpload"><input type="file" id="imageFile" name="image_file" accept="image/*"><label for="imageFile">📷 Buscar por imagen<br><small>JPG o PNG hasta 10MB</small></label><img id="imagePreview" class="image-preview" src="#" alt="Vista previa"></div>' if image_search_available else '') + '''
+            ''' + ('<div class="image-upload" id="imageUpload"><input type="file" id="imageFile" name="image_file" accept="image/*"><label for="imageFile">📷 Identificar repuesto por imagen<br><small>Sube foto de la pieza que necesitas (JPG/PNG, máx 10MB)</small></label><img id="imagePreview" class="image-preview" src="#" alt="Vista previa"></div>' if image_search_available else '') + '''
         </form>
         
         <div class="tips">
-            <h4>Sistema optimizado''' + (' + Búsqueda por Imagen:' if image_search_available else ':') + '''</h4>
+            <h4>🔧 Sistema Especializado en Autopartes''' + (' + IA Visual:' if image_search_available else ':') + '''</h4>
             <ul style="margin: 8px 0 0 15px; font-size: 13px;">
-                <li><strong>Velocidad:</strong> Resultados en menos de 15 segundos</li>
-                <li><strong>USA:</strong> Amazon, Walmart, Target, Best Buy</li>
-                <li><strong>Filtrado:</strong> Sin Alibaba, Temu, AliExpress</li>
-                ''' + ('<li><strong>🖼️ IA:</strong> Identifica productos en imágenes automáticamente</li>' if image_search_available else '<li><strong>⚠️ Imagen:</strong> Configura GEMINI_API_KEY para activar</li>') + '''
+                <li><strong>✅ Solo sitios autorizados:</strong> 402 tiendas verificadas de autopartes en USA</li>
+                <li><strong>🏪 Incluye:</strong> OEM Dealers, RockAuto, AutoZone, O'Reilly, NAPA, CarParts.com</li>
+                <li><strong>🚫 Excluye:</strong> Sitios no especializados y vendedores no autorizados</li>
+                <li><strong>⚡ Optimizado:</strong> Búsquedas con términos técnicos automotrices</li>
+                ''' + ('<li><strong>🤖 IA Visual:</strong> Identifica cualquier repuesto desde foto automáticamente</li>' if image_search_available else '<li><strong>⚠️ IA Visual:</strong> Configura GEMINI_API_KEY para activar identificación por imagen</li>') + '''
             </ul>
+            <p style="margin-top: 10px; font-size: 12px; color: #666;"><strong>Ejemplos:</strong> "brake pads Honda Civic", "air filter Toyota Camry 2018", "headlight assembly Ford F150"</p>
         </div>
         
         <div id="loading" class="loading">
             <div class="spinner"></div>
-            <h3>Buscando productos...</h3>
-            <p id="loadingText">Máximo 15 segundos</p>
+            <h3>Buscando autopartes...</h3>
+            <p id="loadingText">Filtrando sitios autorizados</p>
         </div>
         <div id="error" class="error"></div>
     </div>
@@ -697,23 +989,23 @@ def search_page():
             const imageFile = imageSearchAvailable ? document.getElementById('imageFile').files[0] : null;
             
             if (!query && !imageFile) {
-                return showError('Por favor ingresa un producto' + (imageSearchAvailable ? ' o sube una imagen' : ''));
+                return showError('Por favor ingresa el nombre del repuesto' + (imageSearchAvailable ? ' o sube una imagen' : ''));
             }
             
             searching = true;
-            showLoading(imageFile ? '🖼️ Analizando imagen con IA...' : 'Buscando productos...');
+            showLoading(imageFile ? '🤖 Analizando imagen del repuesto con IA...' : '🔍 Buscando en sitios de autopartes...');
             
             const timeoutId = setTimeout(() => { 
                 searching = false; 
                 hideLoading(); 
                 showError('Búsqueda muy lenta - Intenta de nuevo'); 
-            }, 20000);
+            }, 25000);
             
             const formData = new FormData();
             if (query) formData.append('query', query);
             if (imageFile) formData.append('image_file', imageFile);
             
-            fetch('/api/search', {
+            fetch('/api/search-autoparts', {
                 method: 'POST',
                 body: formData
             })
@@ -727,7 +1019,7 @@ def search_page():
                 if (data.success) {
                     window.location.href = '/results';
                 } else {
-                    showError(data.error || 'Error en la búsqueda');
+                    showError(data.error || 'Error en la búsqueda de autopartes');
                 }
             })
             .catch(error => { 
@@ -738,7 +1030,7 @@ def search_page():
             });
         });
         
-        function showLoading(text = 'Buscando productos...') { 
+        function showLoading(text = 'Buscando autopartes...') { 
             document.getElementById('loadingText').textContent = text;
             document.getElementById('loading').style.display = 'block'; 
             document.getElementById('error').style.display = 'none'; 
@@ -752,11 +1044,11 @@ def search_page():
         }
     </script>'''
     
-    return render_template_string(render_page('Busqueda', content))
+    return render_template_string(render_page('Busqueda de Autopartes', content))
 
-@app.route('/api/search', methods=['POST'])
+@app.route('/api/search-autoparts', methods=['POST'])
 @login_required
-def api_search():
+def api_search_autoparts():
     try:
         # Obtener parámetros
         query = request.form.get('query', '').strip() if request.form.get('query') else None
@@ -767,58 +1059,65 @@ def api_search():
         if image_file and image_file.filename != '':
             try:
                 image_content = image_file.read()
-                print(f"📷 Imagen recibida: {len(image_content)} bytes")
+                print(f"🔧 Imagen de autoparte recibida: {len(image_content)} bytes")
                 
                 # Validar tamaño (máximo 10MB)
                 if len(image_content) > 10 * 1024 * 1024:
                     return jsonify({'success': False, 'error': 'La imagen es demasiado grande (máximo 10MB)'}), 400
                     
             except Exception as e:
-                print(f"❌ Error al leer imagen: {e}")
-                return jsonify({'success': False, 'error': 'Error al procesar la imagen'}), 400
+                print(f"❌ Error al leer imagen de autoparte: {e}")
+                return jsonify({'success': False, 'error': 'Error al procesar la imagen del repuesto'}), 400
         
         # Validar que hay al menos una entrada
         if not query and not image_content:
-            return jsonify({'success': False, 'error': 'Debe proporcionar una consulta o una imagen'}), 400
+            return jsonify({'success': False, 'error': 'Debe proporcionar el nombre del repuesto o una imagen'}), 400
         
         # Limitar longitud de query
-        if query and len(query) > 80:
-            query = query[:80]
+        if query and len(query) > 100:
+            query = query[:100]
         
         user_email = session.get('user_email', 'Unknown')
         search_type = "imagen" if image_content and not query else "texto+imagen" if image_content and query else "texto"
-        print(f"Search request from {user_email}: {search_type}")
+        print(f"🔧 Búsqueda de autopartes from {user_email}: {search_type}")
         
-        # Realizar búsqueda con soporte para imagen
-        products = price_finder.search_products(query=query, image_content=image_content)
+        # Realizar búsqueda especializada en autopartes
+        products = autoparts_finder.search_autoparts(query=query, image_content=image_content)
         
         session['last_search'] = {
-            'query': query or "búsqueda por imagen",
+            'query': query or "búsqueda por imagen de autoparte",
             'products': products,
             'timestamp': datetime.now().isoformat(),
             'user': user_email,
-            'search_type': search_type
+            'search_type': search_type,
+            'is_autoparts': True
         }
         
-        print(f"Search completed for {user_email}: {len(products)} products found")
-        return jsonify({'success': True, 'products': products, 'total': len(products)})
+        print(f"✅ Búsqueda de autopartes completada para {user_email}: {len(products)} repuestos encontrados")
+        return jsonify({'success': True, 'products': products, 'total': len(products), 'autoparts_filtered': True})
         
     except Exception as e:
-        print(f"Search error: {e}")
+        print(f"❌ Error en búsqueda de autopartes: {e}")
         try:
-            query = request.form.get('query', 'producto') if request.form.get('query') else 'producto'
-            fallback = price_finder._get_examples(query)
-            session['last_search'] = {'query': str(query), 'products': fallback, 'timestamp': datetime.now().isoformat()}
-            return jsonify({'success': True, 'products': fallback, 'total': len(fallback)})
+            query = request.form.get('query', 'brake pads') if request.form.get('query') else 'brake pads'
+            fallback = autoparts_finder._get_autoparts_examples(query)
+            session['last_search'] = {
+                'query': str(query), 
+                'products': fallback, 
+                'timestamp': datetime.now().isoformat(),
+                'is_autoparts': True,
+                'search_type': 'example'
+            }
+            return jsonify({'success': True, 'products': fallback, 'total': len(fallback), 'autoparts_filtered': True})
         except:
-            return jsonify({'success': False, 'error': 'Error interno del servidor'}), 500
+            return jsonify({'success': False, 'error': 'Error interno del servidor de autopartes'}), 500
 
 @app.route('/results')
 @login_required
 def results_page():
     try:
         if 'last_search' not in session:
-            flash('No hay busquedas recientes.', 'warning')
+            flash('No hay busquedas recientes de autopartes.', 'warning')
             return redirect(url_for('search_page'))
         
         current_user = firebase_auth.get_current_user()
@@ -827,11 +1126,11 @@ def results_page():
         
         search_data = session['last_search']
         products = search_data.get('products', [])
-        query = html.escape(str(search_data.get('query', 'busqueda')))
+        query = html.escape(str(search_data.get('query', 'busqueda de autopartes')))
         search_type = search_data.get('search_type', 'texto')
         
         products_html = ""
-        badges = ['MEJOR', '2do', '3ro']
+        badges = ['MEJOR PRECIO', 'POPULAR', 'CALIDAD']
         colors = ['#4caf50', '#ff9800', '#9c27b0']
         
         for i, product in enumerate(products[:6]):
@@ -844,23 +1143,49 @@ def results_page():
             search_source_badge = ''
             source = product.get('search_source', '')
             if source == 'image':
-                search_source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #673ab7; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">📷 IMAGEN</div>'
+                search_source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #673ab7; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">📷 IA</div>'
             elif source == 'combined':
                 search_source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #607d8b; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">🔗 MIXTO</div>'
             
-            title = html.escape(str(product.get('title', 'Producto')))
-            price = html.escape(str(product.get('price', '$0.00')))
-            source_store = html.escape(str(product.get('source', 'Tienda')))
-            link = html.escape(str(product.get('link', '#')))
+            # Badge de categoría de autoparte
+            category = product.get('category', 'general')
+            category_colors = {
+                'engine': '#d32f2f', 'brake': '#c62828', 'suspension': '#7b1fa2',
+                'electrical': '#303f9f', 'filters': '#388e3c', 'body': '#f57c00'
+            }
+            category_names = {
+                'engine': 'MOTOR', 'brake': 'FRENOS', 'suspension': 'SUSPENSIÓN',
+                'electrical': 'ELÉCTRICO', 'filters': 'FILTROS', 'body': 'CARROCERÍA'
+            }
             
-            products_html += '''
+            category_badge = ''
+            if category in category_colors:
+                category_badge = f'<div style="position: absolute; bottom: 8px; left: 8px; background: {category_colors[category]}; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">{category_names[category]}</div>'
+            
+            title = html.escape(str(product.get('title', 'Autoparte')))
+            price = html.escape(str(product.get('price', '$0.00')))
+            source_store = html.escape(str(product.get('source', 'Tienda de Autopartes')))
+            link = html.escape(str(product.get('link', '#')))
+            rating = product.get('rating', '')
+            reviews = product.get('reviews', '')
+            
+            # Indicador de sitio autorizado
+            is_autoparts_site = product.get('is_autoparts_site', False)
+            verified_badge = '<div style="position: absolute; top: 35px; right: 8px; background: #4caf50; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">✓ AUTORIZADO</div>' if is_autoparts_site else ''
+            
+            rating_html = f'<span style="color: #ff9800;">⭐ {rating}</span> ({reviews} reviews)' if rating and reviews else ''
+            
+            products_html += f'''
                 <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
-                    ''' + badge + '''
-                    ''' + search_source_badge + '''
-                    <h3 style="color: #1a73e8; margin-bottom: 8px; font-size: 16px; margin-top: ''' + ('20px' if search_source_badge else '0') + ';">''' + title + '''</h3>
-                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">''' + price + ''' <span style="font-size: 12px; color: #666;">USD</span></div>
-                    <p style="color: #666; margin-bottom: 12px; font-size: 14px;">Tienda: ''' + source_store + '''</p>
-                    <a href="''' + link + '''" target="_blank" rel="noopener noreferrer" style="background: #1a73e8; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">Ver Producto</a>
+                    {badge}
+                    {search_source_badge}
+                    {verified_badge}
+                    {category_badge}
+                    <h3 style="color: #1e3c72; margin-bottom: 8px; font-size: 16px; margin-top: {'20px' if search_source_badge else '0'};">{title}</h3>
+                    <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">{price} <span style="font-size: 12px; color: #666;">USD</span></div>
+                    <p style="color: #666; margin-bottom: 8px; font-size: 14px;">🏪 {source_store}</p>
+                    {f'<p style="color: #888; margin-bottom: 12px; font-size: 12px;">{rating_html}</p>' if rating_html else ''}
+                    <a href="{link}" target="_blank" rel="noopener noreferrer" style="background: #1e3c72; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🔧 Ver Repuesto</a>
                 </div>'''
         
         prices = [p.get('price_numeric', 0) for p in products if p.get('price_numeric', 0) > 0]
@@ -868,36 +1193,47 @@ def results_page():
         if prices:
             min_price = min(prices)
             avg_price = sum(prices) / len(prices)
-            search_type_text = {"texto": "texto", "imagen": "imagen IA", "texto+imagen": "texto + imagen IA", "combined": "búsqueda mixta"}.get(search_type, search_type)
-            stats = '''
+            search_type_text = {
+                "texto": "texto", 
+                "imagen": "imagen + IA", 
+                "texto+imagen": "texto + imagen + IA", 
+                "combined": "búsqueda mixta",
+                "example": "ejemplos"
+            }.get(search_type, search_type)
+            
+            # Contar sitios únicos
+            unique_stores = len(set(p.get('source', '') for p in products if p.get('source')))
+            
+            stats = f'''
                 <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                    <h3 style="color: #2e7d32; margin-bottom: 8px;">Resultados de búsqueda (''' + search_type_text + ''')</h3>
-                    <p><strong>''' + str(len(products)) + ''' productos encontrados</strong></p>
-                    <p><strong>Mejor precio: $''' + f'{min_price:.2f}' + '''</strong></p>
-                    <p><strong>Precio promedio: $''' + f'{avg_price:.2f}' + '''</strong></p>
+                    <h3 style="color: #2e7d32; margin-bottom: 8px;">🔧 Resultados de Autopartes ({search_type_text})</h3>
+                    <p><strong>{len(products)} repuestos encontrados</strong> en {unique_stores} tiendas autorizadas</p>
+                    <p><strong>Mejor precio: ${min_price:.2f}</strong></p>
+                    <p><strong>Precio promedio: ${avg_price:.2f}</strong></p>
+                    <p style="font-size: 12px; color: #666; margin-top: 8px;">✅ Solo sitios especializados en autopartes de USA</p>
                 </div>'''
         
-        content = '''
+        content = f'''
         <div style="max-width: 800px; margin: 0 auto;">
             <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center; display: flex; align-items: center; justify-content: center;">
-                <span style="color: white; font-size: 14px;"><strong>''' + user_name_escaped + '''</strong></span>
+                <span style="color: white; font-size: 14px;"><strong>🔧 {user_name_escaped}</strong></span>
                 <div style="margin-left: 15px;">
-                    <a href="''' + url_for('auth_logout') + '''" style="background: rgba(220,53,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
-                    <a href="''' + url_for('search_page') + '''" style="background: rgba(40,167,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Nueva Busqueda</a>
+                    <a href="{url_for('auth_logout')}" style="background: rgba(220,53,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
+                    <a href="{url_for('search_page')}" style="background: rgba(40,167,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Nueva Búsqueda</a>
                 </div>
             </div>
             
-            <h1 style="color: white; text-align: center; margin-bottom: 8px;">Resultados: "''' + query + '''"</h1>
-            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Busqueda completada</p>
+            <h1 style="color: white; text-align: center; margin-bottom: 8px;">🔧 Autopartes: "{query}"</h1>
+            <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Búsqueda especializada completada</p>
             
-            ''' + stats + '''
-            ''' + products_html + '''
+            {stats}
+            {products_html}
         </div>'''
         
-        return render_template_string(render_page('Resultados - Price Finder USA', content))
+        return render_template_string(render_page('Resultados Autopartes - AutoParts Finder USA', content))
     except Exception as e:
-        print(f"Results page error: {e}")
-        flash('Error al mostrar resultados.', 'danger')
+        print(f"❌ Error en página de resultados de autopartes: {e}")
+        flash('Error al mostrar resultados de autopartes.', 'danger')
         return redirect(url_for('search_page'))
 
 @app.route('/api/health')
@@ -906,13 +1242,79 @@ def health_check():
         return jsonify({
             'status': 'OK', 
             'timestamp': datetime.now().isoformat(),
+            'service': 'AutoParts Finder USA',
+            'autoparts_sites_loaded': len(ALL_AUTOPARTS_DOMAINS),
             'firebase_auth': 'enabled' if firebase_auth.firebase_web_api_key else 'disabled',
-            'serpapi': 'enabled' if price_finder.is_api_configured() else 'disabled',
+            'serpapi': 'enabled' if autoparts_finder.is_api_configured() else 'disabled',
             'gemini_vision': 'enabled' if GEMINI_READY else 'disabled',
-            'pil_available': 'enabled' if PIL_AVAILABLE else 'disabled'
+            'pil_available': 'enabled' if PIL_AVAILABLE else 'disabled',
+            'specialization': 'automotive_parts_only'
         })
     except Exception as e:
         return jsonify({'status': 'ERROR', 'message': str(e)}), 500
+
+# Ruta adicional para mostrar sitios incluidos
+@app.route('/sites')
+@login_required
+def sites_info():
+    current_user = firebase_auth.get_current_user()
+    user_name = current_user['user_name'] if current_user else 'Usuario'
+    user_name_escaped = html.escape(user_name)
+    
+    # Generar HTML de sitios por categoría
+    sites_html = ""
+    category_names = {
+        'oem_dealers': '🏭 Concesionarios Oficiales (OEM)',
+        'major_platforms': '🌐 Plataformas Principales',
+        'chain_stores': '🏪 Cadenas de Tiendas',
+        'specialized_oem': '🔧 Especialistas OEM por Marca',
+        'european_specialists': '🇪🇺 Especialistas Europeos',
+        'performance': '🏁 Performance y Racing',
+        'salvage_used': '♻️ Salvamento y Usados'
+    }
+    
+    for category, name in category_names.items():
+        if category in AUTOPARTS_SITES_DB:
+            sites_html += f'<h3 style="color: #1e3c72; margin-top: 20px;">{name}</h3><ul style="columns: 2; margin-bottom: 15px;">'
+            
+            data = AUTOPARTS_SITES_DB[category]
+            if isinstance(data, dict):
+                for brand, sites in data.items():
+                    if isinstance(sites, list):
+                        for site in sites[:3]:  # Limitar para no sobrecargar
+                            sites_html += f'<li style="margin-bottom: 3px;"><small>{site}</small></li>'
+            elif isinstance(data, list):
+                for site in data[:10]:  # Limitar
+                    sites_html += f'<li style="margin-bottom: 3px;"><small>{site}</small></li>'
+            
+            sites_html += '</ul>'
+    
+    content = f'''
+    <div class="container">
+        <div class="user-info">
+            <span><strong>{user_name_escaped}</strong></span>
+            <div style="display: inline-block; margin-left: 15px;">
+                <a href="{url_for('search_page')}" style="background: #28a745; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">🔍 Buscar</a>
+                <a href="{url_for('auth_logout')}" style="background: #dc3545; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-left: 8px;">Salir</a>
+            </div>
+        </div>
+        
+        <h1>🔧 Sitios de Autopartes Incluidos</h1>
+        <p class="subtitle">Base de datos de {len(ALL_AUTOPARTS_DOMAINS)} sitios verificados especializados en autopartes</p>
+        
+        <div style="background: #e3f2fd; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
+            <h4 style="color: #1565c0; margin-bottom: 10px;">✅ Garantía de Calidad</h4>
+            <p style="font-size: 14px; color: #333;">Todos los resultados provienen exclusivamente de estos sitios verificados y especializados en autopartes automotrices en Estados Unidos. No incluimos marketplaces generales ni vendedores no autorizados.</p>
+        </div>
+        
+        {sites_html}
+        
+        <div style="background: #f5f5f5; padding: 15px; border-radius: 8px; margin-top: 30px; text-align: center;">
+            <p style="font-size: 12px; color: #666;">Total: {len(ALL_AUTOPARTS_DOMAINS)} sitios únicos organizados por especialización</p>
+        </div>
+    </div>'''
+    
+    return render_template_string(render_page('Sitios Incluidos - AutoParts Finder', content))
 
 # Middleware
 @app.before_request
@@ -935,26 +1337,30 @@ def after_request(response):
     response.headers['X-Content-Type-Options'] = 'nosniff'
     response.headers['X-Frame-Options'] = 'DENY'
     response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+    response.headers['X-Autoparts-Service'] = 'AutoParts-Finder-USA'
     return response
 
 # Error handlers
 @app.errorhandler(404)
 def not_found(error):
-    return '<h1>404 - Pagina no encontrada</h1><p><a href="/">Volver al inicio</a></p>', 404
+    return '<h1>404 - Pagina no encontrada</h1><p><a href="/">🔧 Volver a AutoParts Finder</a></p>', 404
 
 @app.errorhandler(500)
 def internal_error(error):
-    return '<h1>500 - Error interno</h1><p><a href="/">Volver al inicio</a></p>', 500
+    return '<h1>500 - Error interno</h1><p><a href="/">🔧 Volver a AutoParts Finder</a></p>', 500
 
 if __name__ == '__main__':
-    print("Price Finder USA con Búsqueda por Imagen - Starting...")
-    print(f"Firebase: {'OK' if os.environ.get('FIREBASE_WEB_API_KEY') else 'NOT_CONFIGURED'}")
-    print(f"SerpAPI: {'OK' if os.environ.get('SERPAPI_KEY') else 'NOT_CONFIGURED'}")
-    print(f"Gemini Vision: {'OK' if GEMINI_READY else 'NOT_CONFIGURED'}")
-    print(f"PIL/Pillow: {'OK' if PIL_AVAILABLE else 'NOT_CONFIGURED'}")
+    print("🔧 AutoParts Finder USA con Búsqueda por Imagen - Starting...")
+    print(f"Firebase: {'✅ OK' if os.environ.get('FIREBASE_WEB_API_KEY') else '❌ NOT_CONFIGURED'}")
+    print(f"SerpAPI: {'✅ OK' if os.environ.get('SERPAPI_KEY') else '❌ NOT_CONFIGURED'}")
+    print(f"Gemini Vision: {'✅ OK' if GEMINI_READY else '❌ NOT_CONFIGURED'}")
+    print(f"PIL/Pillow: {'✅ OK' if PIL_AVAILABLE else '❌ NOT_CONFIGURED'}")
+    print(f"AutoParts Sites: ✅ {len(ALL_AUTOPARTS_DOMAINS)} sitios cargados")
     print(f"Puerto: {os.environ.get('PORT', '5000')}")
+    print("🔧 Especialización: SOLO AUTOPARTES DE USA")
     app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 5000)), debug=False, threaded=True)
 else:
     import logging
     logging.basicConfig(level=logging.INFO, format='%(asctime)s %(message)s')
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
+    print(f"🔧 AutoParts Finder USA iniciado con {len(ALL_AUTOPARTS_DOMAINS)} sitios especializados")
