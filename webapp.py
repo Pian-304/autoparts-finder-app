@@ -1281,6 +1281,10 @@ def configure_scraper_for_auto_parts():
 # Configurar el scraper al inicio
 configure_scraper_for_auto_parts()
 
+@app.route('/')
+def home():
+    return render_page("Auto Parts Finder", "<div class='container'><h1>Auto Parts Finder</h1><div class='subtitle'>Encuentra repuestos automotrices en USA</div></div>")
+
 @app.route('/api/scrape-test', methods=['GET'])
 @login_required
 def test_scraping():
