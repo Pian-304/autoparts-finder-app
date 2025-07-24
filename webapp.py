@@ -1,4 +1,4 @@
-# webapp.py - AutoParts Finder USA
+# webapp.py - AutoParts Finder USA v2.2
 import os
 import re
 import html
@@ -44,7 +44,7 @@ if GEMINI_AVAILABLE and GEMINI_API_KEY:
         GEMINI_READY = True
         logger.info("Gemini configurado")
     except Exception as e:
-        logger.error(f"Error Gemini: {e}")
+        logger.error("Error Gemini: %s", e)
 
 AUTOPARTS_SITES = [
     'rockauto.com', 'carparts.com', 'partsgeek.com', '1aauto.com', 'carid.com',
@@ -53,19 +53,19 @@ AUTOPARTS_SITES = [
     'mopar.com', 'jegs.com', 'summitracing.com', 'ecstuning.com', 'fcpeuro.com'
 ]
 
-logger.info(f"Sitios cargados: {len(AUTOPARTS_SITES)}")
+logger.info("Sitios cargados: %d", len(AUTOPARTS_SITES))
 
 class FirebaseAuth:
     def __init__(self):
         self.api_key = os.environ.get("FIREBASE_WEB_API_KEY")
         self.configured = bool(self.api_key)
-        logger.info(f"Firebase: {'OK' if self.configured else 'NO'}")
+        logger.info("Firebase: %s", 'OK' if self.configured else 'NO')
     
     def login_user(self, email, password):
         if not self.configured:
             return {'success': False, 'message': 'Servicio no configurado', 'user_data': None}
         
-        url = f"https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key={self.api_key}"
+        url = "https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=" + self.api_key
         payload = {'email': email, 'password': password, 'returnSecureToken': True}
         
         try:
@@ -84,7 +84,7 @@ class FirebaseAuth:
                 }
             }
         except Exception as e:
-            logger.error(f"Login error: {e}")
+            logger.error("Login error: %s", e)
             return {'success': False, 'message': 'Error de login', 'user_data': None}
     
     def set_user_session(self, user_data):
@@ -142,7 +142,7 @@ def analyze_image_with_gemini(image_content):
             return response.text.strip()
         return None
     except Exception as e:
-        logger.error(f"Error imagen: {e}")
+        logger.error("Error imagen: %s", e)
         return None
 
 def validate_image(image_content):
@@ -160,7 +160,7 @@ class AutoPartsFinder:
         self.base_url = "https://serpapi.com/search"
         self.cache = {}
         self.cache_ttl = 300
-        logger.info(f"SerpAPI: {'OK' if self.api_key else 'NO'}")
+        logger.info("SerpAPI: %s", 'OK' if self.api_key else 'NO')
     
     def is_configured(self):
         return bool(self.api_key)
@@ -226,20 +226,20 @@ class AutoPartsFinder:
         if title:
             search_query = quote_plus(title[:60])
             if 'amazon' in source:
-                return f"https://www.amazon.com/s?k={search_query}+automotive"
+                return "https://www.amazon.com/s?k=" + search_query + "+automotive"
             elif 'autozone' in source:
-                return f"https://www.autozone.com/parts?searchText={search_query}"
+                return "https://www.autozone.com/parts?searchText=" + search_query
             elif 'oreilly' in source:
-                return f"https://www.oreillyauto.com/search?q={search_query}"
+                return "https://www.oreillyauto.com/search?q=" + search_query
             else:
-                return f"https://www.google.com/search?tbm=shop&q={search_query}+auto+parts"
+                return "https://www.google.com/search?tbm=shop&q=" + search_query + "+auto+parts"
         return "#"
     
     def make_request(self, engine, query):
         if not self.api_key:
             return None
         
-        optimized_query = f"{query} automotive parts replacement"
+        optimized_query = query + " automotive parts replacement"
         
         params = {
             'engine': engine,
@@ -259,7 +259,7 @@ class AutoPartsFinder:
             if response.status_code == 200:
                 return response.json()
         except Exception as e:
-            logger.error(f"API error: {e}")
+            logger.error("API error: %s", e)
         return None
     
     def process_results(self, data, engine):
@@ -294,7 +294,7 @@ class AutoPartsFinder:
             
             product = {
                 'title': html.escape(title[:120]),
-                'price': f"${price_num:.2f}",
+                'price': "${:.2f}".format(price_num),
                 'price_numeric': float(price_num),
                 'source': html.escape(source[:50]),
                 'link': self.get_product_link(item),
@@ -315,15 +315,15 @@ class AutoPartsFinder:
             image_query = analyze_image_with_gemini(image_content)
             if image_query:
                 if query:
-                    final_query = f"{query} {image_query}"
+                    final_query = query + " " + image_query
                     search_source = "combined"
                 else:
                     final_query = image_query
                     search_source = "image"
         
-        logger.info(f"Búsqueda: '{final_query}' ({search_source})")
+        logger.info("Búsqueda: '%s' (%s)", final_query, search_source)
         
-        cache_key = f"autoparts_{hash(final_query.lower())}"
+        cache_key = "autoparts_" + str(hash(final_query.lower()))
         if cache_key in self.cache:
             cache_data, timestamp = self.cache[cache_key]
             if (time.time() - timestamp) < self.cache_ttl:
@@ -384,7 +384,7 @@ class AutoPartsFinder:
             parts_data = [('OEM Air Filter', 18), ('Premium Oil Filter', 12), ('Cabin Air Filter', 22)]
         else:
             base_name = query.title() if len(query) < 30 else query[:30].title()
-            parts_data = [(f'{base_name} OEM', 60), (f'{base_name} Aftermarket', 45), (f'{base_name} Premium', 85)]
+            parts_data = [(base_name + ' OEM', 60), (base_name + ' Aftermarket', 45), (base_name + ' Premium', 85)]
         
         for i, (store_name, store_domain) in enumerate(stores):
             part_name, base_price = parts_data[i % len(parts_data)]
@@ -397,11 +397,11 @@ class AutoPartsFinder:
             }
             
             examples.append({
-                'title': f'{part_name} - {["Premium", "OEM", "Value"][i]}',
-                'price': f'${final_price:.2f}',
+                'title': part_name + ' - ' + ['Premium', 'OEM', 'Value'][i],
+                'price': "${:.2f}".format(final_price),
                 'price_numeric': final_price,
                 'source': store_name,
-                'link': store_links.get(store_domain, f'https://{store_domain}'),
+                'link': store_links.get(store_domain, 'https://' + store_domain),
                 'rating': ['4.6', '4.3', '4.4'][i],
                 'reviews': ['1250', '890', '720'][i],
                 'search_source': 'example',
@@ -414,7 +414,7 @@ class AutoPartsFinder:
 autoparts_finder = AutoPartsFinder()
 
 def render_page(title, content):
-    template = '''<!DOCTYPE html>
+    template = """<!DOCTYPE html>
 <html lang="es">
 <head>
     <title>{0}</title>
@@ -450,10 +450,10 @@ def render_page(title, content):
     </style>
 </head>
 <body>{1}</body>
-</html>'''
+</html>"""
     return template.format(title, content)
 
-LOGIN_TEMPLATE = '''<!DOCTYPE html>
+LOGIN_TEMPLATE = """<!DOCTYPE html>
 <html lang="es">
 <head>
     <meta charset="UTF-8">
@@ -506,7 +506,7 @@ LOGIN_TEMPLATE = '''<!DOCTYPE html>
         </div>
     </div>
 </body>
-</html>'''
+</html>"""
 
 @app.route('/auth/login-page')
 def auth_login_page():
@@ -550,69 +550,69 @@ def search_page():
     user_name = html.escape(current_user['user_name'] if current_user else 'Usuario')
     
     image_available = GEMINI_READY and PIL_AVAILABLE
+    sites_count = str(len(AUTOPARTS_SITES))
+    availability_text = 'Búsqueda por texto o imagen' if image_available else 'Búsqueda por texto'
     
-    header_html = '''
-    <div style="background: linear-gradient(45deg, #1e3c72, #2a5298); color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
-        <h2>🔧 AutoParts Finder USA</h2>
-        <p>Especializado en Repuestos Automotrices - ''' + str(len(AUTOPARTS_SITES)) + ''' Sitios Verificados</p>
-    </div>'''
-    
-    user_info_html = '''
-    <div class="user-info">
-        <span><strong>''' + user_name + '''</strong></span>
-        <a href="''' + url_for('auth_logout') + '''" style="margin-left: 15px; background: #dc3545; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none;">Salir</a>
-    </div>'''
-    
-    form_html = '''
-    <h1>Buscar Autopartes</h1>
-    <p class="subtitle">''' + ('Búsqueda por texto o imagen' if image_available else 'Búsqueda por texto') + ''' - Solo sitios autorizados</p>
-    
-    <form id="searchForm" enctype="multipart/form-data">
-        <div class="search-bar">
-            <input type="text" id="searchQuery" name="query" placeholder="Ej: brake pads Honda Civic, air filter Toyota...">
-            <button type="submit">🔍 Buscar</button>
-        </div>'''
-    
-    if image_available:
-        form_html += '''
-        <div style="text-align: center; margin: 20px 0; color: #666;">O sube una imagen del repuesto</div>
-        <div class="image-upload">
-            <input type="file" id="imageFile" name="image_file" accept="image/*">
-            <label for="imageFile">📷 Identificar repuesto por imagen<br><small>JPG/PNG, máx 10MB</small></label>
-            <img id="imagePreview" class="image-preview">
-        </div>'''
-    
-    form_html += '</form>'
-    
-    tips_html = '''
-    <div class="tips">
-        <h4>🔧 Sistema Especializado''' + ('+ IA Visual:' if image_available else ':') + '''</h4>
-        <ul style="margin: 8px 0 0 15px; font-size: 13px;">
-            <li><strong>✅ Solo sitios autorizados:</strong> ''' + str(len(AUTOPARTS_SITES)) + ''' tiendas verificadas</li>
-            <li><strong>🏪 Incluye:</strong> RockAuto, AutoZone, O'Reilly, NAPA, CarParts.com</li>
-            <li><strong>🚫 Excluye:</strong> Vendedores no autorizados</li>'''
+    content = """
+    <div class="container">
+        <div style="background: linear-gradient(45deg, #1e3c72, #2a5298); color: white; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: center;">
+            <h2>🔧 AutoParts Finder USA</h2>
+            <p>Especializado en Repuestos Automotrices - """ + sites_count + """ Sitios Verificados</p>
+        </div>
+        
+        <div class="user-info">
+            <span><strong>""" + user_name + """</strong></span>
+            <a href='""" + url_for('auth_logout') + """' style="margin-left: 15px; background: #dc3545; color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none;">Salir</a>
+        </div>
+        
+        <h1>Buscar Autopartes</h1>
+        <p class="subtitle">""" + availability_text + """ - Solo sitios autorizados</p>
+        
+        <form id="searchForm" enctype="multipart/form-data">
+            <div class="search-bar">
+                <input type="text" id="searchQuery" name="query" placeholder="Ej: brake pads Honda Civic, air filter Toyota...">
+                <button type="submit">🔍 Buscar</button>
+            </div>"""
     
     if image_available:
-        tips_html += '<li><strong>🤖 IA Visual:</strong> Identifica repuestos automáticamente</li>'
+        content += """
+            <div style="text-align: center; margin: 20px 0; color: #666;">O sube una imagen del repuesto</div>
+            <div class="image-upload">
+                <input type="file" id="imageFile" name="image_file" accept="image/*">
+                <label for="imageFile">📷 Identificar repuesto por imagen<br><small>JPG/PNG, máx 10MB</small></label>
+                <img id="imagePreview" class="image-preview">
+            </div>"""
+    
+    content += """
+        </form>
+        
+        <div class="tips">
+            <h4>🔧 Sistema Especializado""" + ('+ IA Visual:' if image_available else ':') + """</h4>
+            <ul style="margin: 8px 0 0 15px; font-size: 13px;">
+                <li><strong>✅ Solo sitios autorizados:</strong> """ + sites_count + """ tiendas verificadas</li>
+                <li><strong>🏪 Incluye:</strong> RockAuto, AutoZone, O'Reilly, NAPA, CarParts.com</li>
+                <li><strong>🚫 Excluye:</strong> Vendedores no autorizados</li>"""
+    
+    if image_available:
+        content += """<li><strong>🤖 IA Visual:</strong> Identifica repuestos automáticamente</li>"""
     else:
-        tips_html += '<li><strong>⚠️ IA Visual:</strong> Configura GEMINI_API_KEY para activar</li>'
+        content += """<li><strong>⚠️ IA Visual:</strong> Configura GEMINI_API_KEY para activar</li>"""
     
-    tips_html += '''
-        </ul>
-    </div>'''
-    
-    status_html = '''
-    <div id="loading" class="loading">
-        <div class="spinner"></div>
-        <h3>Buscando autopartes...</h3>
-        <p id="loadingText">Filtrando sitios autorizados</p>
+    content += """
+            </ul>
+        </div>
+        
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <h3>Buscando autopartes...</h3>
+            <p id="loadingText">Filtrando sitios autorizados</p>
+        </div>
+        <div id="error" class="error"></div>
     </div>
-    <div id="error" class="error"></div>'''
     
-    javascript = '''
     <script>
         let searching = false;
-        const imageAvailable = ''' + str(image_available).lower() + ''';
+        const imageAvailable = """ + str(image_available).lower() + """;
         
         if (imageAvailable) {
             document.getElementById('imageFile').addEventListener('change', function(e) {
@@ -700,9 +700,7 @@ def search_page():
             e.textContent = msg; 
             e.style.display = 'block'; 
         }
-    </script>'''
-    
-    content = '<div class="container">' + header_html + user_info_html + form_html + tips_html + status_html + '</div>' + javascript
+    </script>"""
     
     return render_template_string(render_page('Búsqueda de Autopartes', content))
 
@@ -742,7 +740,7 @@ def api_search_autoparts():
         return jsonify({'success': True, 'products': products, 'total': len(products)})
         
     except Exception as e:
-        logger.error(f"Error búsqueda: {e}")
+        logger.error("Error búsqueda: %s", e)
         fallback = autoparts_finder.get_examples(request.form.get('query', 'brake pads'))
         session['last_search'] = {
             'query': 'brake pads', 
@@ -775,12 +773,12 @@ def results_page():
         if not product:
             continue
         
-        badge = ''
+        badge = ""
         if i < 3:
             badge = '<div style="position: absolute; top: 8px; right: 8px; background: ' + colors[i] + '; color: white; padding: 4px 8px; border-radius: 12px; font-size: 11px; font-weight: bold;">' + badges[i] + '</div>'
         
         source = product.get('search_source', '')
-        source_badge = ''
+        source_badge = ""
         if source == 'image':
             source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #673ab7; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">📷 IA</div>'
         elif source == 'combined':
@@ -793,66 +791,77 @@ def results_page():
         rating = product.get('rating', '')
         reviews = product.get('reviews', '')
         
-        verified_badge = '<div style="position: absolute; top: 35px; right: 8px; background: #4caf50; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">✓ AUTORIZADO</div>' if product.get('is_autoparts_site') else ''
+        verified_badge = ""
+        if product.get('is_autoparts_site'):
+            verified_badge = '<div style="position: absolute; top: 35px; right: 8px; background: #4caf50; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">✓ AUTORIZADO</div>'
         
-        rating_html = ''
+        rating_html = ""
         if rating and reviews:
             rating_html = '<p style="color: #888; margin-bottom: 12px; font-size: 12px;"><span style="color: #ff9800;">⭐ ' + rating + '</span> (' + reviews + ' reviews)</p>'
         
         margin_top = '20px' if source_badge else '0'
         
-        products_html += '''
+        product_item = """
             <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
-                ''' + badge + '''
-                ''' + source_badge + '''
-                ''' + verified_badge + '''
-                <h3 style="color: #1e3c72; margin-bottom: 8px; font-size: 16px; margin-top: ''' + margin_top + ''';">''' + title + '''</h3>
-                <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">''' + price + ''' <span style="font-size: 12px; color: #666;">USD</span></div>
-                <p style="color: #666; margin-bottom: 8px; font-size: 14px;">🏪 ''' + source_store + '''</p>
-                ''' + rating_html + '''
-                <a href="''' + link + '''" target="_blank" rel="noopener noreferrer" style="background: #1e3c72; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🔧 Ver Repuesto</a>
-            </div>'''
+                """ + badge + """
+                """ + source_badge + """
+                """ + verified_badge + """
+                <h3 style="color: #1e3c72; margin-bottom: 8px; font-size: 16px; margin-top: """ + margin_top + """;">""" + title + """</h3>
+                <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">""" + price + """ <span style="font-size: 12px; color: #666;">USD</span></div>
+                <p style="color: #666; margin-bottom: 8px; font-size: 14px;">🏪 """ + source_store + """</p>
+                """ + rating_html + """
+                <a href='""" + link + """' target="_blank" rel="noopener noreferrer" style="background: #1e3c72; color: white; padding: 10px 16px; text-decoration: none; border-radius: 6px; font-weight: 600; display: inline-block; font-size: 14px;">🔧 Ver Repuesto</a>
+            </div>"""
+        
+        products_html += product_item
     
     prices = [p.get('price_numeric', 0) for p in products if p.get('price_numeric', 0) > 0]
     stats = ""
     if prices:
         min_price = min(prices)
         avg_price = sum(prices) / len(prices)
-        search_type_text = {
+        search_type_map = {
             "texto": "texto", 
             "imagen": "imagen + IA", 
             "texto+imagen": "texto + imagen + IA", 
             "combined": "búsqueda mixta",
             "example": "ejemplos"
-        }.get(search_type, search_type)
+        }
+        search_type_text = search_type_map.get(search_type, search_type)
         
         unique_stores = len(set(p.get('source', '') for p in products if p.get('source')))
         
-        stats = '''
+        min_price_str = "{:.2f}".format(min_price)
+        avg_price_str = "{:.2f}".format(avg_price)
+        
+        stats = """
             <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                <h3 style="color: #2e7d32; margin-bottom: 8px;">🔧 Resultados (''' + search_type_text + ''')</h3>
-                <p><strong>''' + str(len(products)) + ''' repuestos encontrados</strong> en ''' + str(unique_stores) + ''' tiendas autorizadas</p>
-                <p><strong>Mejor precio: '' + f'{min_price:.2f}' + '''</strong></p>
-                <p><strong>Precio promedio: '' + f'{avg_price:.2f}' + '''</strong></p>
+                <h3 style="color: #2e7d32; margin-bottom: 8px;">🔧 Resultados (""" + search_type_text + """)</h3>
+                <p><strong>""" + str(len(products)) + """ repuestos encontrados</strong> en """ + str(unique_stores) + """ tiendas autorizadas</p>
+                <p><strong>Mejor precio: $""" + min_price_str + """</strong></p>
+                <p><strong>Precio promedio: $""" + avg_price_str + """</strong></p>
                 <p style="font-size: 12px; color: #666; margin-top: 8px;">✅ Solo sitios especializados en autopartes de USA</p>
-            </div>'''
+            </div>"""
     
-    content = '''
+    logout_url = url_for('auth_logout')
+    search_url = url_for('search_page')
+    
+    content = """
     <div style="max-width: 800px; margin: 0 auto;">
         <div style="background: rgba(255,255,255,0.15); padding: 12px; border-radius: 8px; margin-bottom: 15px; text-align: center; display: flex; align-items: center; justify-content: center;">
-            <span style="color: white; font-size: 14px;"><strong>🔧 ''' + user_name + '''</strong></span>
+            <span style="color: white; font-size: 14px;"><strong>🔧 """ + user_name + """</strong></span>
             <div style="margin-left: 15px;">
-                <a href="''' + url_for('auth_logout') + '''" style="background: rgba(220,53,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
-                <a href="''' + url_for('search_page') + '''" style="background: rgba(40,167,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Nueva Búsqueda</a>
+                <a href='""" + logout_url + """' style="background: rgba(220,53,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px; margin-right: 8px;">Salir</a>
+                <a href='""" + search_url + """' style="background: rgba(40,167,69,0.9); color: white; padding: 6px 12px; border-radius: 4px; text-decoration: none; font-size: 13px;">Nueva Búsqueda</a>
             </div>
         </div>
         
-        <h1 style="color: white; text-align: center; margin-bottom: 8px;">🔧 Autopartes: "''' + query + '''"</h1>
+        <h1 style="color: white; text-align: center; margin-bottom: 8px;">🔧 Autopartes: """ + query + """</h1>
         <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Búsqueda especializada completada</p>
         
-        ''' + stats + '''
-        ''' + products_html + '''
-    </div>'''
+        """ + stats + """
+        """ + products_html + """
+    </div>"""
     
     return render_template_string(render_page('Resultados - AutoParts Finder USA', content))
 
@@ -863,7 +872,7 @@ def health_check():
             'status': 'OK', 
             'timestamp': datetime.now().isoformat(),
             'service': 'AutoParts Finder USA',
-            'version': '2.1',
+            'version': '2.2',
             'autoparts_sites_loaded': len(AUTOPARTS_SITES),
             'firebase_auth': 'enabled' if firebase_auth.configured else 'disabled',
             'serpapi': 'enabled' if autoparts_finder.is_configured() else 'disabled',
@@ -872,7 +881,7 @@ def health_check():
             'specialization': 'automotive_parts_only'
         })
     except Exception as e:
-        logger.error(f"Error health check: {e}")
+        logger.error("Error health check: %s", e)
         return jsonify({'status': 'ERROR', 'message': str(e)}), 500
 
 @app.before_request
@@ -895,7 +904,7 @@ def after_request(response):
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'X-Autoparts-Service': 'AutoParts-Finder-USA-v2.1'
+        'X-Autoparts-Service': 'AutoParts-Finder-USA-v2.2'
     })
     return response
 
@@ -905,7 +914,7 @@ def not_found(error):
 
 @app.errorhandler(500)
 def internal_error(error):
-    logger.error(f"Error 500: {error}")
+    logger.error("Error 500: %s", error)
     return '<h1>500 - Error interno</h1><p><a href="/">🔧 Volver a AutoParts Finder</a></p>', 500
 
 @app.errorhandler(413)
@@ -914,14 +923,14 @@ def request_too_large(error):
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("🔧 AutoParts Finder USA v2.1 - Iniciando")
+    print("🔧 AutoParts Finder USA v2.2 - Iniciando")
     print("=" * 60)
-    print(f"Firebase Auth: {'✅ OK' if firebase_auth.configured else '❌ NO'}")
-    print(f"SerpAPI: {'✅ OK' if autoparts_finder.is_configured() else '❌ NO'}")
-    print(f"Gemini Vision: {'✅ OK' if GEMINI_READY else '❌ NO'}")
-    print(f"PIL/Pillow: {'✅ OK' if PIL_AVAILABLE else '❌ NO'}")
-    print(f"AutoParts Sites: ✅ {len(AUTOPARTS_SITES)} sitios cargados")
-    print(f"Puerto: {os.environ.get('PORT', '5000')}")
+    print("Firebase Auth: %s", '✅ OK' if firebase_auth.configured else '❌ NO')
+    print("SerpAPI: %s", '✅ OK' if autoparts_finder.is_configured() else '❌ NO')
+    print("Gemini Vision: %s", '✅ OK' if GEMINI_READY else '❌ NO')
+    print("PIL/Pillow: %s", '✅ OK' if PIL_AVAILABLE else '❌ NO')
+    print("AutoParts Sites: ✅ %d sitios cargados", len(AUTOPARTS_SITES))
+    print("Puerto: %s", os.environ.get('PORT', '5000'))
     print("🔧 Especialización: AUTOPARTES USA EXCLUSIVAMENTE")
     print("=" * 60)
     
@@ -933,9 +942,9 @@ if __name__ == '__main__':
     )
 else:
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
-    logger.info("🔧 AutoParts Finder USA v2.1 iniciado en producción")
-    logger.info(f"📊 {len(AUTOPARTS_SITES)} sitios especializados cargados")
-    logger.info(f"🔐 Firebase: {'OK' if firebase_auth.configured else 'NO'}")
-    logger.info(f"🔍 SerpAPI: {'OK' if autoparts_finder.is_configured() else 'NO'}")
-    logger.info(f"🤖 Gemini: {'OK' if GEMINI_READY else 'NO'}")
+    logger.info("🔧 AutoParts Finder USA v2.2 iniciado en producción")
+    logger.info("📊 %d sitios especializados cargados", len(AUTOPARTS_SITES))
+    logger.info("🔐 Firebase: %s", 'OK' if firebase_auth.configured else 'NO')
+    logger.info("🔍 SerpAPI: %s", 'OK' if autoparts_finder.is_configured() else 'NO')
+    logger.info("🤖 Gemini: %s", 'OK' if GEMINI_READY else 'NO')
     logger.info("✅ Aplicación lista para producción")
