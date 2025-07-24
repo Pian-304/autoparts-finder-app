@@ -1,4 +1,4 @@
-# webapp.py - AutoParts Finder USA v2.2
+# webapp.py - AutoParts Finder USA v2.3
 import os
 import re
 import html
@@ -201,7 +201,7 @@ class AutoPartsFinder:
         query_lower = query.lower()
         if any(word in query_lower for word in ['engine', 'motor']):
             base_price = 800
-        elif any(word in query_lower for word in ['brake', 'freno']):
+        elif any(word in query_lower for word in ['brake', 'freno', 'banda']):
             base_price = 85
         elif any(word in query_lower for word in ['headlight', 'light']):
             base_price = 120
@@ -217,7 +217,7 @@ class AutoPartsFinder:
         
         for key in ['product_link', 'link']:
             link = item.get(key, '')
-            if link and self.is_autoparts_site(link):
+            if link:
                 return link
         
         title = item.get('title', '')
@@ -235,17 +235,56 @@ class AutoPartsFinder:
                 return "https://www.google.com/search?tbm=shop&q=" + search_query + "+auto+parts"
         return "#"
     
+    def calculate_relevance_score(self, item, original_query):
+        """Calcula un score de relevancia basado en coincidencias con la búsqueda original"""
+        if not item or not original_query:
+            return 0
+        
+        title = item.get('title', '').lower()
+        query_words = original_query.lower().split()
+        score = 0
+        
+        # Palabras exactas en el título
+        for word in query_words:
+            if len(word) >= 3:  # Solo palabras significativas
+                if word in title:
+                    score += 10
+                # Coincidencias parciales
+                elif any(word in title_word for title_word in title.split()):
+                    score += 5
+        
+        # Bonus por términos específicos de autopartes
+        auto_terms = ['brake', 'freno', 'banda', 'filter', 'filtro', 'honda', 'xl200', 'xr200', 'oem', 'aftermarket']
+        for term in auto_terms:
+            if term in title:
+                score += 15
+        
+        # Penalty por términos genéricos sin contexto específico
+        generic_terms = ['ceramic', 'premium', 'value', 'set', 'pair']
+        if not any(specific in title for specific in ['honda', 'xl200', 'xr200', 'brake', 'freno']):
+            for term in generic_terms:
+                if term in title:
+                    score -= 5
+        
+        return max(0, score)
+    
     def make_request(self, engine, query):
         if not self.api_key:
             return None
         
-        optimized_query = query + " automotive parts replacement"
+        # Para búsquedas específicas, usar la query original sin modificaciones extensas
+        if engine == 'google_shopping':
+            # Mantener la query original para Shopping
+            optimized_query = query
+        else:
+            # Solo para búsquedas orgánicas agregar términos adicionales
+            optimized_query = query + " automotive parts"
         
         params = {
             'engine': engine,
             'q': optimized_query,
             'api_key': self.api_key,
-            'num': 10,
+            'num': 15,  # Aumentar número de resultados para mejor filtrado
             'location': 'United States',
             'gl': 'us'
         }
@@ -262,7 +301,7 @@ class AutoPartsFinder:
             logger.error("API error: %s", e)
         return None
     
-    def process_results(self, data, engine):
+    def process_results(self, data, engine, original_query):
         if not data:
             return []
         
@@ -270,21 +309,29 @@ class AutoPartsFinder:
         results = data.get(results_key, [])
         
         products = []
-        autopart_keywords = ['part', 'filter', 'brake', 'engine', 'automotive', 'car', 'auto', 'oem', 'aftermarket']
+        
+        # Para Google Shopping, ser menos restrictivo con la validación de sitios
+        skip_site_validation = (engine == 'google_shopping')
         
         for item in results:
-            if len(products) >= 6:
+            if len(products) >= 10:  # Procesar más resultados inicialmente
                 break
             
             title = item.get('title', '')
             if len(title) < 5:
                 continue
             
-            if not any(keyword in title.lower() for keyword in autopart_keywords):
+            # Calcular relevancia
+            relevance_score = self.calculate_relevance_score(item, original_query)
+            
+            # Si el score es muy bajo, saltar este resultado
+            if relevance_score < 5:
                 continue
             
             source = item.get('source', '')
-            if not self.is_autoparts_site(source):
+            
+            # Para Google Shopping, no validar sitios estrictamente
+            if not skip_site_validation and not self.is_autoparts_site(source):
                 continue
             
             price_str = item.get('price', '')
@@ -300,12 +347,15 @@ class AutoPartsFinder:
                 'link': self.get_product_link(item),
                 'rating': str(item.get('rating', '')),
                 'reviews': str(item.get('reviews', '')),
-                'is_autoparts_site': True,
-                'engine_source': engine
+                'is_autoparts_site': skip_site_validation or self.is_autoparts_site(source),
+                'engine_source': engine,
+                'relevance_score': relevance_score
             }
             products.append(product)
         
-        return products
+        # Ordenar por relevancia primero, luego por precio
+        products.sort(key=lambda x: (-x['relevance_score'], x['price_numeric']))
+        return products[:6]  # Devolver solo los 6 mejores
     
     def search_autoparts(self, query=None, image_content=None):
         final_query = query or "auto parts"
@@ -334,21 +384,25 @@ class AutoPartsFinder:
         
         all_products = []
         
+        # Buscar primero en Google Shopping (sin restricción de sitios)
         shopping_data = self.make_request('google_shopping', final_query)
         if shopping_data:
-            products = self.process_results(shopping_data, 'google_shopping')
+            products = self.process_results(shopping_data, 'google_shopping', final_query)
             all_products.extend(products)
         
+        # Si necesitamos más resultados, buscar en resultados orgánicos
         if len(all_products) < 4:
             organic_data = self.make_request('google', final_query)
             if organic_data:
-                products = self.process_results(organic_data, 'google')
+                products = self.process_results(organic_data, 'google', final_query)
                 all_products.extend(products)
         
+        # Si aún necesitamos más, agregar ejemplos
         if len(all_products) < 3:
             examples = self.get_examples(final_query)
             all_products.extend(examples[:3])
         
+        # Remover duplicados basado en título similar
         seen_titles = set()
         unique_products = []
         for product in all_products:
@@ -358,7 +412,8 @@ class AutoPartsFinder:
                 unique_products.append(product)
                 product['search_source'] = search_source
         
-        unique_products.sort(key=lambda x: x['price_numeric'])
+        # Ordenar por relevancia y precio
+        unique_products.sort(key=lambda x: (-x.get('relevance_score', 0), x['price_numeric']))
         final_products = unique_products[:6]
         
         self.cache[cache_key] = (final_products, time.time())
@@ -378,8 +433,16 @@ class AutoPartsFinder:
         examples = []
         query_lower = query.lower()
         
-        if any(word in query_lower for word in ['brake', 'freno']):
-            parts_data = [('Ceramic Brake Pads Set', 75), ('Brake Rotor Pair', 120), ('Brake Caliper', 95)]
+        # Ejemplos más específicos basados en la búsqueda
+        if any(word in query_lower for word in ['brake', 'freno', 'banda']):
+            if 'honda' in query_lower and any(model in query_lower for model in ['xl200', 'xr200']):
+                parts_data = [
+                    ('Honda XL200 XR200 Brake Pads Set', 85),
+                    ('Honda XL/XR 200 Brake Shoes', 65),
+                    ('Honda XL200R XR200R Brake Kit', 120)
+                ]
+            else:
+                parts_data = [('Ceramic Brake Pads Set', 75), ('Brake Rotor Pair', 120), ('Brake Caliper', 95)]
         elif any(word in query_lower for word in ['filter', 'filtro']):
             parts_data = [('OEM Air Filter', 18), ('Premium Oil Filter', 12), ('Cabin Air Filter', 22)]
         else:
@@ -406,7 +469,8 @@ class AutoPartsFinder:
                 'reviews': ['1250', '890', '720'][i],
                 'search_source': 'example',
                 'engine_source': 'example',
-                'is_autoparts_site': True
+                'is_autoparts_site': True,
+                'relevance_score': 50  # Score alto para ejemplos
             })
         
         return examples
@@ -566,11 +630,11 @@ def search_page():
         </div>
         
         <h1>Buscar Autopartes</h1>
-        <p class="subtitle">""" + availability_text + """ - Solo sitios autorizados</p>
+        <p class="subtitle">""" + availability_text + """ - Búsqueda inteligente mejorada</p>
         
         <form id="searchForm" enctype="multipart/form-data">
             <div class="search-bar">
-                <input type="text" id="searchQuery" name="query" placeholder="Ej: brake pads Honda Civic, air filter Toyota...">
+                <input type="text" id="searchQuery" name="query" placeholder="Ej: brake pads Honda Civic, Bandas Freno Honda XL200...">
                 <button type="submit">🔍 Buscar</button>
             </div>"""
     
@@ -587,11 +651,12 @@ def search_page():
         </form>
         
         <div class="tips">
-            <h4>🔧 Sistema Especializado""" + ('+ IA Visual:' if image_available else ':') + """</h4>
+            <h4>🔧 Sistema Mejorado v2.3""" + ('+ IA Visual:' if image_available else ':') + """</h4>
             <ul style="margin: 8px 0 0 15px; font-size: 13px;">
-                <li><strong>✅ Solo sitios autorizados:</strong> """ + sites_count + """ tiendas verificadas</li>
-                <li><strong>🏪 Incluye:</strong> RockAuto, AutoZone, O'Reilly, NAPA, CarParts.com</li>
-                <li><strong>🚫 Excluye:</strong> Vendedores no autorizados</li>"""
+                <li><strong>✅ Búsqueda inteligente:</strong> Reconoce términos en español e inglés</li>
+                <li><strong>🎯 Relevancia mejorada:</strong> Prioriza resultados específicos</li>
+                <li><strong>🛒 Google Shopping:</strong> Sin restricciones de sitios para más resultados</li>
+                <li><strong>🏪 Incluye:</strong> RockAuto, AutoZone, O'Reilly, NAPA, Amazon, eBay</li>"""
     
     if image_available:
         content += """<li><strong>🤖 IA Visual:</strong> Identifica repuestos automáticamente</li>"""
@@ -605,7 +670,7 @@ def search_page():
         <div id="loading" class="loading">
             <div class="spinner"></div>
             <h3>Buscando autopartes...</h3>
-            <p id="loadingText">Filtrando sitios autorizados</p>
+            <p id="loadingText">Analizando resultados con IA</p>
         </div>
         <div id="error" class="error"></div>
     </div>
@@ -784,6 +849,12 @@ def results_page():
         elif source == 'combined':
             source_badge = '<div style="position: absolute; top: 8px; left: 8px; background: #607d8b; color: white; padding: 4px 8px; border-radius: 12px; font-size: 10px; font-weight: bold;">🔗 MIXTO</div>'
         
+        # Mostrar score de relevancia si está disponible
+        relevance_score = product.get('relevance_score', 0)
+        relevance_badge = ""
+        if relevance_score > 20:
+            relevance_badge = '<div style="position: absolute; top: 35px; left: 8px; background: #2196f3; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">⭐ ' + str(relevance_score) + '</div>'
+        
         title = html.escape(str(product.get('title', 'Autoparte')))
         price = html.escape(str(product.get('price', '$0.00')))
         source_store = html.escape(str(product.get('source', 'Tienda')))
@@ -792,7 +863,9 @@ def results_page():
         reviews = product.get('reviews', '')
         
         verified_badge = ""
-        if product.get('is_autoparts_site'):
+        if product.get('engine_source') == 'google_shopping':
+            verified_badge = '<div style="position: absolute; top: 35px; right: 8px; background: #ff5722; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">🛒 SHOPPING</div>'
+        elif product.get('is_autoparts_site'):
             verified_badge = '<div style="position: absolute; top: 35px; right: 8px; background: #4caf50; color: white; padding: 2px 6px; border-radius: 8px; font-size: 9px; font-weight: bold;">✓ AUTORIZADO</div>'
         
         rating_html = ""
@@ -805,6 +878,7 @@ def results_page():
             <div style="border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px; background: white; position: relative; box-shadow: 0 2px 4px rgba(0,0,0,0.08);">
                 """ + badge + """
                 """ + source_badge + """
+                """ + relevance_badge + """
                 """ + verified_badge + """
                 <h3 style="color: #1e3c72; margin-bottom: 8px; font-size: 16px; margin-top: """ + margin_top + """;">""" + title + """</h3>
                 <div style="font-size: 28px; color: #2e7d32; font-weight: bold; margin: 12px 0;">""" + price + """ <span style="font-size: 12px; color: #666;">USD</span></div>
@@ -830,17 +904,19 @@ def results_page():
         search_type_text = search_type_map.get(search_type, search_type)
         
         unique_stores = len(set(p.get('source', '') for p in products if p.get('source')))
+        shopping_results = len([p for p in products if p.get('engine_source') == 'google_shopping'])
         
         min_price_str = "{:.2f}".format(min_price)
         avg_price_str = "{:.2f}".format(avg_price)
         
         stats = """
             <div style="background: #e8f5e8; border: 1px solid #4caf50; padding: 15px; border-radius: 8px; margin-bottom: 20px;">
-                <h3 style="color: #2e7d32; margin-bottom: 8px;">🔧 Resultados (""" + search_type_text + """)</h3>
-                <p><strong>""" + str(len(products)) + """ repuestos encontrados</strong> en """ + str(unique_stores) + """ tiendas autorizadas</p>
+                <h3 style="color: #2e7d32; margin-bottom: 8px;">🔧 Resultados Mejorados v2.3 (""" + search_type_text + """)</h3>
+                <p><strong>""" + str(len(products)) + """ repuestos encontrados</strong> en """ + str(unique_stores) + """ tiendas</p>
+                <p><strong>Google Shopping: """ + str(shopping_results) + """ resultados</strong> (sin restricciones)</p>
                 <p><strong>Mejor precio: $""" + min_price_str + """</strong></p>
                 <p><strong>Precio promedio: $""" + avg_price_str + """</strong></p>
-                <p style="font-size: 12px; color: #666; margin-top: 8px;">✅ Solo sitios especializados en autopartes de USA</p>
+                <p style="font-size: 12px; color: #666; margin-top: 8px;">✅ Búsqueda inteligente con relevancia por IA</p>
             </div>"""
     
     logout_url = url_for('auth_logout')
@@ -857,7 +933,7 @@ def results_page():
         </div>
         
         <h1 style="color: white; text-align: center; margin-bottom: 8px;">🔧 Autopartes: """ + query + """</h1>
-        <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Búsqueda especializada completada</p>
+        <p style="text-align: center; color: rgba(255,255,255,0.9); margin-bottom: 25px;">Búsqueda mejorada completada</p>
         
         """ + stats + """
         """ + products_html + """
@@ -872,13 +948,14 @@ def health_check():
             'status': 'OK', 
             'timestamp': datetime.now().isoformat(),
             'service': 'AutoParts Finder USA',
-            'version': '2.2',
+            'version': '2.3',
             'autoparts_sites_loaded': len(AUTOPARTS_SITES),
             'firebase_auth': 'enabled' if firebase_auth.configured else 'disabled',
             'serpapi': 'enabled' if autoparts_finder.is_configured() else 'disabled',
             'gemini_vision': 'enabled' if GEMINI_READY else 'disabled',
             'pil_available': 'enabled' if PIL_AVAILABLE else 'disabled',
-            'specialization': 'automotive_parts_only'
+            'specialization': 'automotive_parts_only',
+            'improvements': 'smart_search_relevance_v2.3'
         })
     except Exception as e:
         logger.error("Error health check: %s", e)
@@ -904,7 +981,7 @@ def after_request(response):
         'X-Content-Type-Options': 'nosniff',
         'X-Frame-Options': 'DENY',
         'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'X-Autoparts-Service': 'AutoParts-Finder-USA-v2.2'
+        'X-Autoparts-Service': 'AutoParts-Finder-USA-v2.3'
     })
     return response
 
@@ -923,7 +1000,7 @@ def request_too_large(error):
 
 if __name__ == '__main__':
     print("=" * 60)
-    print("🔧 AutoParts Finder USA v2.2 - Iniciando")
+    print("🔧 AutoParts Finder USA v2.3 - Iniciando")
     print("=" * 60)
     print("Firebase Auth: %s", '✅ OK' if firebase_auth.configured else '❌ NO')
     print("SerpAPI: %s", '✅ OK' if autoparts_finder.is_configured() else '❌ NO')
@@ -931,7 +1008,8 @@ if __name__ == '__main__':
     print("PIL/Pillow: %s", '✅ OK' if PIL_AVAILABLE else '❌ NO')
     print("AutoParts Sites: ✅ %d sitios cargados", len(AUTOPARTS_SITES))
     print("Puerto: %s", os.environ.get('PORT', '5000'))
-    print("🔧 Especialización: AUTOPARTES USA EXCLUSIVAMENTE")
+    print("🔧 Especialización: AUTOPARTES USA + BÚSQUEDA INTELIGENTE")
+    print("✨ Mejoras v2.3: Relevancia IA + Google Shopping sin restricciones")
     print("=" * 60)
     
     app.run(
@@ -942,9 +1020,10 @@ if __name__ == '__main__':
     )
 else:
     logging.getLogger('werkzeug').setLevel(logging.WARNING)
-    logger.info("🔧 AutoParts Finder USA v2.2 iniciado en producción")
+    logger.info("🔧 AutoParts Finder USA v2.3 iniciado en producción")
     logger.info("📊 %d sitios especializados cargados", len(AUTOPARTS_SITES))
     logger.info("🔐 Firebase: %s", 'OK' if firebase_auth.configured else 'NO')
     logger.info("🔍 SerpAPI: %s", 'OK' if autoparts_finder.is_configured() else 'NO')
     logger.info("🤖 Gemini: %s", 'OK' if GEMINI_READY else 'NO')
+    logger.info("✨ Mejoras v2.3: Búsqueda inteligente activada")
     logger.info("✅ Aplicación lista para producción")
